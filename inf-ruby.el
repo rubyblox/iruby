@@ -98,6 +98,7 @@ under `inf-ruby-implementations'"
 
 
 (defcustom inf-ruby-ruby-command "ruby"
+  ;; NB May need to be set as e.g "ruby26" or "ruby27" on FreeBSD
   "Shell command for ruby implementations.
 
 See also: `inf-ruby-implementations'"
@@ -141,6 +142,8 @@ returns a string."
 (defvar inf-ruby--cmd-cache nil
   "Cached command specifiers for inf-ruby implementations
 
+[FIXME unimplemented]
+
 See also: `inf-ruby-implementations'")
 
 
@@ -152,7 +155,7 @@ See also: `inf-ruby-implementations'")
        (funcall cmd))
       ((stringp cmd)
        cmd)
-      (t (error "Unknown cmd type for implementation %s: %s"
+      (t (error "Unknown command type for implementation %S: %S"
                 %impl cmd)))))
 
 ;; (inf-ruby--get-impl-cmd)
@@ -181,8 +184,6 @@ See also: `inf-ruby-implementations'")
 (defun inf-ruby--irb-command (&optional append-args)
   ;; defined by default in `inf-ruby-implementations'
   ;; may be used by `inf-ruby--get-impl-cmd'
-  ;;
-  ;; FIXME cache the args list
   (let* ((args
           (append inf-ruby-irb-args
                   append-args)))
@@ -196,8 +197,6 @@ See also: `inf-ruby-implementations'")
 (defun inf-ruby--ruby-command (&optional args)
   ;; defined by default in `inf-ruby-implementations'
   ;; may be used by `inf-ruby--get-impl-cmd'
-  ;;
-  ;; FIXME cache the args list
   (if (inf-ruby--ruby-needs-nomultiline-p)
       (setq args (append args (list "--nomultiline")))
     (setq args (append args (list "--noreadline"))))
