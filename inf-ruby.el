@@ -82,27 +82,43 @@ Also see the description of `ielm-prompt-read-only'."
   :type 'boolean
   :group 'inf-ruby)
 
-(defcustom inf-ruby-ruby-irb-command "irb"
-  "Shell command for irb under ruby implementations.
+(defcustom inf-ruby-irb-command "irb"
+  "Shell command for irb implementations.
 
-See also: `inf-ruby-subshell'"
+See also: `inf-ruby-implementations'"
   :type 'string
   :group 'inf-ruby)
 
-(defcustom inf-ruby-subshell nil
-  "Subshell for the ruby implementation, if any.
-
-See also: `inf-ruby-implementations'"
-  :type '(choice (const nil) string)
+(defcustom inf-ruby-irb-args '("--prompt" "default"
+                               "-r" "irb/completion")
+  "Default command line arguments for `inf-ruby--irb-command'
+under `inf-ruby-implementations'"
+  :type '(repeat string)
   :group 'inf-ruby)
 
-(defcustom inf-ruby-subshell-args nil
-  "..."
+
+(defcustom inf-ruby-ruby-command "ruby"
+  "Shell command for ruby implementations.
+
+See also: `inf-ruby-implementations'"
+  :type 'string
+  :group 'inf-ruby)
+
+(defcustom inf-ruby-ruby-args '("-r" "irb"
+                                "-r" "irb/completion"
+                                "-e" "IRB.start"
+                                "--"
+                                "--prompt" "default"
+                                )
+  "Default command line arguments for `inf-ruby--ruby-command'
+under `inf-ruby-implementations'"
   :type '(repeat string)
-  :group'inf-ruby)
+  :group 'inf-ruby)
+
 
 (defcustom inf-ruby-implementations
-  '(("ruby"     . inf-ruby--irb-command)
+  '(("irb"      . inf-ruby--irb-command)
+    ("ruby"     . inf-ruby--ruby-command)
     ("jruby"    . "jruby -S irb --prompt default --noreadline -r irb/completion")
     ("rubinius" . "rbx -r irb/completion")
     ("yarv"     . "irb1.9 -r irb/completion")
@@ -111,7 +127,7 @@ See also: `inf-ruby-implementations'"
   "An alist mapping Ruby implementations to Irb commands.
 CDR of each entry must be either a string or a function that
 returns a string."
-  :type '(repeat (cons string string))
+  :type '(repeat (cons string (choice string symbol)))
   :group 'inf-ruby)
 
 (defcustom inf-ruby-default-implementation "ruby"
@@ -120,74 +136,100 @@ returns a string."
                            inf-ruby-implementations))
   :group 'inf-ruby)
 
+;; (setq inf-ruby-default-implementation "irb")
+
+(defvar inf-ruby--cmd-cache nil
+  "Cached command specifiers for inf-ruby implementations
+
+See also: `inf-ruby-implementations'")
+
 
 (defun inf-ruby--get-impl-cmd (&optional impl)
-  (cdr (assoc (or impl "ruby") inf-ruby-implementations)))
+  (let* ((%impl (or impl inf-ruby-default-implementation))
+         (cmd (cdr (assoc %impl inf-ruby-implementations))))
+    (cond
+      ((symbolp cmd)
+       (funcall cmd))
+      ((stringp cmd)
+       cmd)
+      (t (error "Unknown cmd type for implementation %s: %s"
+                %impl cmd)))))
 
 ;; (inf-ruby--get-impl-cmd)
 
-(defun inf-ruby--parse-subshell-cmd (&optional args)
-  (let (consumed)
-    (append (list inf-ruby-subshell)
-            (mapcar (lambda (arg)
-                      (cond
-                        ((string-match "%s" arg)
-                         (setq consumed t)
-                         ;; NB mapping `args' into the cmd string, here
-                         (format arg  (mapconcat 'identity
-                                                 (cons inf-ruby-ruby-irb-command args)
-                                                 " ")))
-                        (t arg)))
-                    inf-ruby-subshell-args)
-            (unless consumed
-              (list inf-ruby-ruby-irb-command))
-            (unless consumed
-              args))))
-
-;; (inf-ruby--parse-subshell-cmd)
-
-(defun inf-ruby--mk-irb-cmd (&rest args)
+(defun inf-ruby--irb-cmd-string (&rest args)
   ;; NB specifically for the "ruby" implementation, by default
   ;;
   ;; Used in both `inf-ruby--irb-command'
   ;; and `inf-ruby--irb-needs-nomultiline-p'
   ;;
-  (mapconcat 'identity (if inf-ruby-subshell
-                           (inf-ruby--parse-subshell-cmd args)
-                         (cons inf-ruby-ruby-irb-command args))
+  (mapconcat 'identity (cons inf-ruby-irb-command args)
              " "))
 
+;; (shell-command-to-string (inf-ruby--irb-cmd-string "-v"))
 
-;; (shell-command-to-string (inf-ruby--mk-irb-cmd "-v"))
+(defun inf-ruby--ruby-cmd-string (&rest args)
+  ;; NB specifically for the "ruby" implementation, by default
+  ;;
+  ;; Used in both `inf-ruby--irb-command'
+  ;; and `inf-ruby--irb-needs-nomultiline-p'
+  ;;
+  (mapconcat 'identity (cons inf-ruby-ruby-command
+                             (append inf-ruby-ruby-args args))
+             " "))
 
 (defun inf-ruby--irb-command (&optional append-args)
+  ;; defined by default in `inf-ruby-implementations'
+  ;; may be used by `inf-ruby--get-impl-cmd'
+  ;;
+  ;; FIXME cache the args list
   (let* ((args
-          (append '(;; "--noinspect" ;; FIXME & this is also useless
-                    ;;
-                    ;; what cmd is actually being run by bash
-                    ;; under subshell irb exec w/ emacs?
-                    "--prompt" "default"
-                    "-r" "irb/completion")
+          (append inf-ruby-irb-args
                   append-args)))
     (if (inf-ruby--irb-needs-nomultiline-p)
         (setq args (append args (list "--nomultiline")))
       (setq args (append args (list "--noreadline"))))
-    (apply #'inf-ruby--mk-irb-cmd args)))
+    (apply #'inf-ruby--irb-cmd-string args)))
 
-;; FIXME is this full cmd not being used for the actual ruby buffer (??)
 ;; (inf-ruby--irb-command)
+
+(defun inf-ruby--ruby-command (&optional args)
+  ;; defined by default in `inf-ruby-implementations'
+  ;; may be used by `inf-ruby--get-impl-cmd'
+  ;;
+  ;; FIXME cache the args list
+  (if (inf-ruby--ruby-needs-nomultiline-p)
+      (setq args (append args (list "--nomultiline")))
+    (setq args (append args (list "--noreadline"))))
+  (apply #'inf-ruby--ruby-cmd-string args))
+
+;; (inf-ruby--ruby-command)
 
 (defun inf-ruby--irb-needs-nomultiline-p ()
   ;; FIXME ensure that this is run only once per Emacs session,
   ;; under the 'ruby' impl
   (let* ((output (shell-command-to-string
-                  (inf-ruby--mk-irb-cmd "-v")))
+                  (inf-ruby--irb-cmd-string "-v")))
          (fields (split-string output "[ (]")))
     (if (equal (car fields) "irb")
         (version<= "1.2.0" (nth 1 fields))
       (error "Irb version unknown: %s" output))))
 
 ;; (inf-ruby--irb-needs-nomultiline-p)
+
+(defun inf-ruby--ruby-needs-nomultiline-p ()
+  ;; FIXME ensure that this is run only once per Emacs session,
+  ;; under the 'ruby' impl
+  (let* ((output (shell-command-to-string
+                  ;; FIXME also need inf-ruby--ruby-cmd-string
+                  (inf-ruby--ruby-cmd-string "-v")))
+         (fields (split-string output "[ (]")))
+    (if (equal (car fields) "irb")
+        (version<= "1.2.0" (nth 1 fields))
+      (error "Irb version unknown: %s" output))))
+
+
+;; (inf-ruby--ruby-needs-nomultiline-p)
 
 (defcustom inf-ruby-console-environment 'ask
   "Envronment to use for the `inf-ruby-console-*' commands.
@@ -453,13 +495,7 @@ Type \\[describe-mode] in the process buffer for the list of commands."
   ;; We're keeping both it and `inf-ruby' for backward compatibility.
   (interactive)
   (run-ruby-or-pop-to-buffer
-   (let ((command
-          (or command
-              (cdr (assoc inf-ruby-default-implementation
-                          inf-ruby-implementations)))))
-     (if (functionp command)
-         (funcall command)
-       command))
+   (or command (inf-ruby--get-impl-cmd))
    (or name "ruby")
    (or (inf-ruby-buffer)
        inf-ruby-buffer)))
@@ -475,10 +511,9 @@ the buffer, defaults to \"ruby\"."
   ;;
   (setq name (or name "ruby"))
 
-  (let ((commandlist (if inf-ruby-subshell
-                         ;; Need to preserve the list form here
-                         (inf-ruby--parse-subshell-cmd)
-                       (split-string-and-unquote command)))
+  (let ((commandlist
+         ;; FIXME Need to preserve the list form here
+         (split-string-and-unquote command))
         (buffer (current-buffer))
         (process-environment process-environment))
     ;; http://debbugs.gnu.org/15775
@@ -507,7 +542,7 @@ the buffer, defaults to \"ruby\"."
   (if (not (and buffer
                 (comint-check-proc buffer)))
       ;; FIXME use a list form for args to 'command'
-      ;; cf.  `inf-ruby--mk-irb-cmd'
+      ;; cf.  `inf-ruby--irb-cmd-string'
       ;; and the updated `inf-ruby--irb-command'
       (run-ruby-new command name)
     (pop-to-buffer buffer)
