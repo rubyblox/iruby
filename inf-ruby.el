@@ -118,16 +118,16 @@ under `inf-ruby-implementations'"
 
 
 (defcustom inf-ruby-implementations
-  '(("irb"      . inf-ruby--irb-command)
-    ("ruby"     . inf-ruby--ruby-command)
+  '(("irb"      . inf-ruby--impl-command)
+    ("ruby"     . inf-ruby--impl-command)
     ("jruby"    . "jruby -S irb --prompt default --noreadline -r irb/completion")
     ("rubinius" . "rbx -r irb/completion")
     ("yarv"     . "irb1.9 -r irb/completion")
     ("macruby"  . "macirb -r irb/completion")
     ("pry"      . "pry"))
-  "An alist mapping Ruby implementations to Irb commands.
+  "An alist mapping Ruby implementation names to Irb commands.
 CDR of each entry must be either a string or a function that
-returns a string."
+returns a string, provided the implementation name."
   :type '(repeat (cons string (choice string symbol)))
   :group 'inf-ruby)
 
@@ -139,96 +139,54 @@ returns a string."
 
 ;; (setq inf-ruby-default-implementation "irb")
 
-(defvar inf-ruby--cmd-cache nil
-  "Cached command specifiers for inf-ruby implementations
-
-[FIXME unimplemented]
-
-See also: `inf-ruby-implementations'")
-
 
 (defun inf-ruby--get-impl-cmd (&optional impl)
   (let* ((%impl (or impl inf-ruby-default-implementation))
          (cmd (cdr (assoc %impl inf-ruby-implementations))))
     (cond
+      ((null cmd)
+       (error "uknown ruby implementation: %s" impl))
       ((symbolp cmd)
        (funcall cmd))
       ((stringp cmd)
        cmd)
-      (t (error "Unknown command type for implementation %S: %S"
+      (t (error "Unknown command syntax for implementation %S, \
+expected a symbol or string: %S"
                 %impl cmd)))))
 
 ;; (inf-ruby--get-impl-cmd)
 
-(defun inf-ruby--irb-cmd-string (&rest args)
-  ;; NB specifically for the "ruby" implementation, by default
-  ;;
-  ;; Used in both `inf-ruby--irb-command'
-  ;; and `inf-ruby--irb-needs-nomultiline-p'
-  ;;
-  (mapconcat 'identity (cons inf-ruby-irb-command args)
-             " "))
-
-;; (shell-command-to-string (inf-ruby--irb-cmd-string "-v"))
-
-(defun inf-ruby--ruby-cmd-string (&rest args)
-  ;; NB specifically for the "ruby" implementation, by default
-  ;;
-  ;; Used in both `inf-ruby--irb-command'
-  ;; and `inf-ruby--irb-needs-nomultiline-p'
-  ;;
-  (mapconcat 'identity (cons inf-ruby-ruby-command
-                             (append inf-ruby-ruby-args args))
-             " "))
-
-(defun inf-ruby--irb-command (&optional append-args)
-  ;; defined by default in `inf-ruby-implementations'
-  ;; may be used by `inf-ruby--get-impl-cmd'
-  (let* ((args
-          (append inf-ruby-irb-args
-                  append-args)))
-    (if (inf-ruby--irb-needs-nomultiline-p)
-        (setq args (append args (list "--nomultiline")))
-      (setq args (append args (list "--noreadline"))))
-    (apply #'inf-ruby--irb-cmd-string args)))
-
-;; (inf-ruby--irb-command)
-
-(defun inf-ruby--ruby-command (&optional args)
-  ;; defined by default in `inf-ruby-implementations'
-  ;; may be used by `inf-ruby--get-impl-cmd'
-  (if (inf-ruby--ruby-needs-nomultiline-p)
-      (setq args (append args (list "--nomultiline")))
-    (setq args (append args (list "--noreadline"))))
-  (apply #'inf-ruby--ruby-cmd-string args))
+(defun inf-ruby--impl-command (name &optional rest-args)
+  (let* ((cmd-str
+          (cond
+            ((string= name "ruby")
+             inf-ruby-ruby-command)
+            ((string= name "irb")
+             inf-ruby-irb-command)
+            (t
+             (error "Unknown implementation %s" name))))
+         (multiline-arg
+          (if (inf-ruby--impl-needs-nomultiline-p cmd-str)
+              "--nomultiline"
+            "--noreadline")))
+    (cons cmd-str
+          (cons multiline-arg (append inf-ruby-irb-args rest-args)))))
 
 ;; (inf-ruby--ruby-command)
 
-(defun inf-ruby--irb-needs-nomultiline-p ()
+(defun inf-ruby--impl-needs-nomultiline-p (cmd)
   ;; FIXME ensure that this is run only once per Emacs session,
-  ;; under the 'ruby' impl
+  ;; under each inf-ruby-irb-command
+  ;;
+  ;; FIXME remove the duplicate code
   (let* ((output (shell-command-to-string
-                  (inf-ruby--irb-cmd-string "-v")))
+                  (concat cmd "-v")))
          (fields (split-string output "[ (]")))
     (if (equal (car fields) "irb")
         (version<= "1.2.0" (nth 1 fields))
-      (error "Irb version unknown: %s" output))))
+      (error "Irb version unknown for %s: %s" cmd output))))
 
-;; (inf-ruby--irb-needs-nomultiline-p)
-
-(defun inf-ruby--ruby-needs-nomultiline-p ()
-  ;; FIXME ensure that this is run only once per Emacs session,
-  ;; under the 'ruby' impl
-  (let* ((output (shell-command-to-string
-                  ;; FIXME also need inf-ruby--ruby-cmd-string
-                  (inf-ruby--ruby-cmd-string "-v")))
-         (fields (split-string output "[ (]")))
-    (if (equal (car fields) "irb")
-        (version<= "1.2.0" (nth 1 fields))
-      (error "Irb version unknown: %s" output))))
-
-
-;; (inf-ruby--ruby-needs-nomultiline-p)
+;; (inf-ruby--irb-needs-nomultiline-
 
 (defcustom inf-ruby-console-environment 'ask
   "Envronment to use for the `inf-ruby-console-*' commands.
@@ -237,6 +195,7 @@ available ones.  Otherwise, just use the value.
 
 Currently only affects Rails and Hanami consoles."
   :type '(choice
+          ;; "the available ones" ??
           (const ask :tag "Ask the user")
           (string :tag "Environment name")))
 
@@ -368,7 +327,7 @@ To launch a REPL with project-specific console instead, type
 project types, including Rails, gems and anything with `racksh'
 in their Gemfile.
 
-Customization: When entered, this mode runs `comint-mode-hook' and
+ oCustomization: When entered, this mode runs `comint-mode-hook' and
 `inf-ruby-mode-hook' (in that order).
 
 You can send text to the inferior Ruby process from other buffers containing
@@ -540,9 +499,7 @@ the buffer, defaults to \"ruby\"."
   ;; - `inf-ruby-console-run'
   (if (not (and buffer
                 (comint-check-proc buffer)))
-      ;; FIXME use a list form for args to 'command'
-      ;; cf.  `inf-ruby--irb-cmd-string'
-      ;; and the updated `inf-ruby--irb-command'
+      ;; FIXME support a list syntax for args to 'command'
       (run-ruby-new command name)
     (pop-to-buffer buffer)
     (unless (and (string= inf-ruby-buffer-impl-name name)
