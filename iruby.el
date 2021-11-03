@@ -47,11 +47,25 @@
 ;;
 ;; iruby provides a REPL buffer connected to a Ruby subprocess.
 ;;
-;; ** Usage **
+;; ** Usage - Interactive evaluation with irb **
 ;;
-;; The command `run-iruby' will launch an interacive irb process buffer
-;; or display any existing irb process buffer. The `run-iruby' function
-;; provides documentation as to
+;; The commands `iruby' and `run-iruby' will launch an interacive irb
+;; process buffer or display any existing irb process buffer.
+;;
+;; The `iruby' command, if called with an interactive prefix argument,
+;; will prompt the user to select an existing implementation under
+;;`iruby-implementations'.
+;;
+;; With an interactive prefix argument, the `run-iruby' command will
+;; prompt the user to enter a shell command string for launching an irb
+;; process.
+;;
+;; If called interactively with no prefix argument, either command will
+;; use `iruby-default-implementation'.
+;;
+;; ** Usage - Additional Features **
+;;
+;; (FIXME needs documentation)
 ;;
 ;; ** Installation **
 ;;
@@ -454,6 +468,19 @@ The following commands are available:
           (when (string= (expand-file-name default-directory) dir)
             (throw 'buffer buffer)))))))
 
+(defun iruby-read-impl (&optional prompt)
+  "Read the name of an implementation in `iruby-implementations',
+returning `iruby-default-implementation' if user has entered no text.
+
+PROMPT will default to the string, \"Ruby Implementation: \""
+  (let* ((txt
+          (completing-read (or prompt "Ruby Implementation: ")
+                           (mapc #'car iruby-implementations)
+                           nil t))
+         (if (and (stringp txt) (zerop (length txt)))
+             iruby-default-implementation
+           txt))))
+
 ;;;###autoload
 (defun iruby (&optional impl)
   "Run an inferior Ruby process in a buffer.
@@ -463,11 +490,9 @@ With prefix argument, prompts for which Ruby implementation
 If there is a Ruby process running in an existing buffer, switch
 to that buffer. Otherwise create a new buffer."
   (interactive (list (if current-prefix-arg
-                         (completing-read "Ruby Implementation: "
-                                          (mapc #'car iruby-implementations))
+                         (iruby-read-impl)
                        iruby-default-implementation)))
   (setq impl (or impl "ruby"))
-
   (let ((command (iruby--parse-impl-cmd impl)))
     (run-iruby command impl)))
 
@@ -483,8 +508,15 @@ switch to that buffer. Otherwise create a new buffer.
 The consecutive buffer names will be:
 `*NAME*', `*NAME*<2>', `*NAME*<3>' and so on.
 
-COMMAND defaults to the default entry in
-`iruby-implementations'. NAME defaults to \"ruby\".
+COMMAND defaults to the default entry in `iruby-implementations'.
+
+NAME defaults to the nondirectory filename of the first element in the
+command string
+
+If called interactively with a prefix argument, the user will be
+prompted to enter a shell command for launching the irb
+process. Otherwise under interactive evaluation, the shell command for
+`iruby-default-implementation' will be used.
 
 Runs the hooks `comint-mode-hook' and `iruby-mode-hook'.
 
@@ -492,12 +524,20 @@ Type \\[describe-mode] in the process buffer for the list of commands."
   ;; This function is interactive and named like this for consistency
   ;; with `run-python', `run-octave', `run-lisp' and so on.
   ;; We're keeping both it and `iruby' for backward compatibility.
-  (interactive)
-  (run-iruby-or-pop-to-buffer
-   (or command (iruby--parse-impl-cmd))
-   (or name "ruby")
-   (or (iruby-buffer)
-       iruby-buffer)))
+  (interactive (list (let ((cmd (if current-prefix-arg
+                                    (read-shell-command "Run irb: ")
+                                  ;; NB read-shell-command would return
+                                  ;; "" on no input
+                                  "")))
+                       (if (zerop (length cmd))
+                           (iruby--parse-impl-cmd iruby-default-implementation)
+                         cmd))))
+  (let* ((%command (or command (iruby--parse-impl-cmd)))
+         (%name (or name (file-name-nondirectory
+                          (car (split-string-and-unquote %command))))))
+    (run-iruby-or-pop-to-buffer %command %name
+                                (or (iruby-buffer)
+                                    iruby-buffer))))
 
 (defun run-iruby-new (command &optional name)
   "Create a new inferior Ruby process in a new buffer.
