@@ -63,6 +63,22 @@
 ;; If called interactively with no prefix argument, either command will
 ;; use `iruby-default-implementation'.
 ;;
+;; ** Usage - Key Bindings, Menus, and Hooks ***
+;;
+;; * `iruby-mode-map' will inherit key bindings from `comint-mode-map'
+;;   when iruby.el is evaluated. This keymap provides bindings for the
+;;   interative irb process buffer
+;;
+;; * `iruby-minor-mode-map' provides a keyamp for `iruby-minor-mode'
+;;
+;; * `iruby-minor-mode-menu' provides an interactive iruby menu
+;;
+;; * `iruby-mode-hook' and `comint-mode-hook' will be used for the
+;;   interactive irb process buffer
+;;
+;; The following documentation illustrates how to use iruby with hooks
+;; provided in other minor modes
+;;
 ;; ** Usage - Additional Features **
 ;;
 ;; (FIXME needs documentation)
@@ -209,7 +225,7 @@ shell command."
   ;;
   ;; This function should accept e.g "irb27" or "ruby-dev" as an
   ;; implementation name, then returning command line argument values in
-  ;; a manner similar to the "irb" or "ruby" case, respectively. 
+  ;; a manner similar to the "irb" or "ruby" case, respectively.
   (let ((cmd-name name))
     (cond
       ((string-match "^irb" cmd-name)
@@ -292,7 +308,7 @@ graphical char in all other prompts.")
   "Mode map for `iruby-mode'.")
 
 ;;;###autoload
-(defvar iruby-source-modes '(ruby-mode enh-ruby-mode)
+(defvar iruby-source-modes '(ruby-mode enh-ruby-mode iruby-minor-mode)
   "Used to determine if a buffer contains Ruby source code.
 If it's loaded into a buffer that is in one of these major modes, it's
 considered a ruby source file by `iruby-load-file'.
@@ -316,7 +332,9 @@ next one.")
 
 ;;;###autoload
 (defun iruby-setup-keybindings ()
-  "Hook up `iruby-minor-mode' to each of `ruby-source-modes'."
+  "[Deprecated] Key bindings are initailized when iruby.el is loaded
+
+See also: `iruby-mode-map' and `iruby-minor-mode-map'"
   (warn "`iruby-setup-keybindings' is deprecated, please don't use it anymore.")
   (warn "If you're using `iruby' from Git, please look up the new usage instructions."))
 
@@ -382,7 +400,7 @@ To launch a REPL with project-specific console instead, type
 project types, including Rails, gems and anything with `racksh'
 in their Gemfile.
 
- oCustomization: When entered, this mode runs `comint-mode-hook' and
+Customization: When entered, this mode runs `comint-mode-hook' and
 `iruby-mode-hook' (in that order).
 
 You can send text to the inferior Ruby process from other buffers containing
