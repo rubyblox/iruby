@@ -130,6 +130,11 @@
   "Run Ruby process in a buffer"
   :group 'languages)
 
+(defcustom iruby-show-results t
+  "If non-nil, show results in the minibuffer after iruby-send commands"
+  :type 'boolean
+  :group 'iruby)
+
 (defcustom iruby-prompt-read-only t
   "If non-nil, the prompt will be read-only.
 
@@ -139,8 +144,8 @@ Also see the description of `ielm-prompt-read-only'."
 
 
 (defcustom iruby-ruby-irb-prefix '("-r" "irb" "-r" "irb/completion"
-                                      "-e" "IRB.start" "--")
-  "List of prefix arguments for running irb via ruby
+                                   "-e" "IRB.start" "--")
+  "List of arguments for ruby, when running irb via ruby
 
 The last element in this list should generally be the string \"--\""
   :type '(repeat string)
@@ -153,9 +158,11 @@ The last element in this list should generally be the string \"--\""
     ;; NB concerning behaviors of `iruby--impl-cmd-list':
     ;;
     ;; When launching irb via a "ruby" cmd, e.g "ruby" or "ruby27" etc,
-    ;; the ruby cmd will receive arguments in `iruby-ruby-irb-prefix'.
-    ;; The args listed for irb, as here, will then be added after the
-    ;; trailing "--" in `iruby-ruby-irb-prefix'
+    ;; the ruby cmd will receive arguments in `iruby-ruby-irb-prefix',
+    ;; via `iruby--impl-cmd-list'. The args listed for irb, as here,
+    ;; will then be added after the trailing "--", such that should be
+    ;; in `iruby-ruby-irb-prefix', subsequetnly returned by
+    ;; `iruby--impl-cmd-list'
     ;;
     ("ruby"     iruby--impl-cmd-list "--prompt" "default")
     ("jruby"    . "jruby -S irb --prompt default --noreadline -r irb/completion")
@@ -203,8 +210,8 @@ shell command."
                      (join (mapcar #'(lambda (%elt)
                                        (join (parse impl %elt)))
                                    elt)))
-                    (list ;; NB value is 'nil' here
-                     (error "Uknown ruby implementation: %s" impl))
+                    (null
+                     (error "Uknonw ruby implementation: %s" impl))
                     (symbol (funcall elt impl))
                     (string elt)
                     (t (error "Unknown command syntax for implementation %S: %S"
@@ -213,6 +220,7 @@ shell command."
 
 ;; (iruby--parse-impl-cmd)
 ;; (iruby--parse-impl-cmd "jruby")
+;; (iruby--parse-impl-cmd "n/a")
 
 (defun iruby--impl-cmd-list (name &optional rest-args)
   ;; NB This will resuse the implementation name as the command name for
@@ -220,24 +228,33 @@ shell command."
   ;;
   ;; The implementation name would generally be provided as a CAR in
   ;; some element of `iruby-implementations', with this function's
-  ;; name then provided as either the CDR or the first element in the
-  ;; CDR of that element of `iruby-implementations'.
+  ;; name then provided as the CDR or the first element in the
+  ;; CDR of that element of `iruby-implementations'. Thus, the first
+  ;; element of the value returned by this function would be used
+  ;; as the name of the ruby or irb implementation to launch
+  ;; under comint.
   ;;
-  ;; This function should accept e.g "irb27" or "ruby-dev" as an
-  ;; implementation name, then returning command line argument values in
-  ;; a manner similar to the "irb" or "ruby" case, respectively.
+  ;; If the implementation name in NAME does not have a prefix either
+  ;; "irb" or "ruby", this will return the cons of NAME and REST-ARGS
+  ;;
+  ;; This function will accept e.g "irb27" or "ruby-dev" as an
+  ;; implementation name, then returning a list of command line argument
+  ;; values in a manner similar to the "irb" or "ruby" case,
+  ;; respectively.
+  ;;
   (let ((cmd-name name))
     (cond
       ((string-match "^irb" cmd-name)
        (cons cmd-name (cons (iruby--irb-input-arg (cons cmd-name rest-args))
                             rest-args)))
       ((string-match "^ruby" cmd-name)
+       ;; NB ensuring that any rest-args will appear after the args for
+       ;; launching irb via ruby
        (let ((%prefix (cons cmd-name iruby-ruby-irb-prefix)))
          (append %prefix (list (iruby--irb-input-arg %prefix))
                  rest-args)))
-      ;; does not match "ruby" or "irb" - returning the impl name as the
-      ;; cmd and the list of irb args, as-is
-      (t (cons cmd-name rest-args)))))
+      (t (warn "Unknown irb implementation %s" name)
+         (cons cmd-name rest-args)))))
 
 (defun iruby--irb-input-arg (cmdlist)
   (let* ((output (shell-command-to-string
@@ -732,33 +749,37 @@ See also: `iruby-show-result', `iruby-get-result'"
          (current-buffer)))
 
 
-(defun iruby-send-region (start end &optional showp)
+;; FIXME define iruby-send-file,
+;;
+;; That function may assume that the irb process
+;; and Emacs are processes on the same network host.
+
+(defun iruby-send-region (start end)
   "Send a region of text from the current buffer to the inferior Ruby process.
 
 When called interactively, this operates on any current region in the
 buffer. Prefix argumet will provide the value of `print'"
-  (interactive "r\nP")
+  (interactive "r")
   (iruby-send-string (buffer-substring start end))
-  (when showp
+  (when iruby-show-results
     (iruby-show-result)))
 
-(defun iruby-send-definition (&optional showp)
+(defun iruby-send-definition ()
   "Send the current definition to the inferior Ruby process."
   (interactive)
   (save-excursion
     (end-of-defun)
     (let ((end (point)))
       (ruby-beginning-of-defun)
-      (iruby-send-region (point) end showp))))
+      (iruby-send-region (point) end))))
 
-(defun iruby-send-last-sexp (&optional showp)
+(defun iruby-send-last-sexp ()
   "Send the previous sexp to the inferior Ruby process."
   (interactive "P")
   (iruby-send-region (save-excursion (ruby-backward-sexp) (point))
-                    (point)
-                    showp))
+                    (point)))
 
-(defun iruby-send-block (&optional showp)
+(defun iruby-send-block ()
   "Send the current block to the inferior Ruby process."
   (interactive "P")
   (save-excursion
@@ -766,7 +787,7 @@ buffer. Prefix argumet will provide the value of `print'"
     (end-of-line)
     (let ((end (point)))
       (ruby-beginning-of-block)
-      (iruby-send-region (point) end showp))))
+      (iruby-send-region (point) end))))
 
 (defvar iruby-last-ruby-buffer nil
   "The last buffer we switched to `iruby' from.")
