@@ -583,8 +583,33 @@ Type \\[describe-mode] in the process buffer for the list of commands."
 This function will display a warning after any change of state other
 than exit, hangup, or finished for a ruby subprocess initialized with
 `run-iruby-new'"
-  (unless (memq state '(exit hangup finished))
-    (warn "iruby process %s state changed to %s" process state)))
+  (print state (get-buffer-create "*scratch*"))
+  ;; FIXME this function was receiving a 'hangup' value that was not a
+  ;; symbol, but instead a string terminated with a newline
+  ;; with GNU Emacs 27.2 (build 1, x86_64-pc-linux-gnu, GTK+ Version 3.24.27, cairo version 1.17.4) 
+  ;; on Arch Linux
+  (let (nomsg)
+    (cond
+      ((stringp state)
+       (when (string= (string-trim state) "hangup")
+         (setq nomsg t)))
+      (t
+       (when  (memq state '(exit hangup finished))
+         (setq nomsg t))))
+    (unless nomsg
+      (warn "iruby process %s state changed to %S" process state))))
+
+
+(defun iruby-jump-to-comint-last-output ()
+  ;; NB for purpose of debugging, this may generally place point at
+  ;; the same location as `iruby-jump-to-last-output'
+  (interactive)
+  (let* ((proc (or (iruby-proc)
+                   (error "No iruby-proc found")))
+         (buff (and proc (process-buffer proc))))
+    (switch-to-buffer buff)
+    (goto-char comint-last-output-start)))
+
 
 
 (defun iruby-jump-to-last-process-mark ()
@@ -668,7 +693,7 @@ line."
             ;; and buffer should be presented - in lieu of activating
             ;; the Emacs debugger with an Emacs error for the failed
             ;; eval under Ruby
-            (buffer-substring-no-properties comint-last-output-start
+            (buffer-substring-no-properties iruby-last-process-mark-point
                                             (point)))))))))
 
 (defun iruby-show-last-output (&optional proc)
@@ -702,6 +727,7 @@ the buffer, defaults to \"ruby\"."
   (setq name (or name "ruby"))
 
   (make-variable-buffer-local 'iruby-last-process-mark-point)
+  (setq iruby-last-process-mark-point nil)
 
   (let ((commandlist
          ;; ** FIXME ** Need to preserve any list form, to here
@@ -908,13 +934,25 @@ the current buffer.
 This is a hook function for `comint-preoutput-filter-functions'"
   ;; NB The string may include any prompt text,
   ;; generally as the last line in the string
-  (setq  iruby-last-process-mark-point
-         (marker-position
-          (process-mark
-           (or (get-buffer-process (current-buffer))
-               (error "No process in buffer %s"
-                      (current-buffer))))))
-  string)
+    (cond
+      ((null iruby-last-process-mark-point)
+       ;; reached for the first line of output,
+       ;; such that would typically contain only
+       ;; the prompt string
+       ;;
+       ;; FIXME this assumes that not any errors
+       ;; have occurred errors during irb init
+       (setq iruby-last-process-mark-point
+             (length string)))
+      (t
+       (let ((markerpt (marker-position
+                        (process-mark
+                         (or (get-buffer-process (current-buffer))
+                             (error "No process in buffer %s"
+                                    (current-buffer)))))))
+         (setq iruby-last-process-mark-point markerpt))))
+    string)
+
 
 (defun iruby-send-region (start end)
   "Send a region of text from the current buffer to the ruby process.
