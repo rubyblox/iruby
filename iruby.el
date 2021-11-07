@@ -856,7 +856,6 @@ See also: `iruby-jump-to-process-mark', `iruby-jump-to-last-prompt',
     (switch-to-buffer buff)
     (goto-char iruby-last-process-mark-point)))
 
-
 (defun iruby-get-last-output (&optional proc)
   "Return the last output from the ruby process PROC as a string.
 
@@ -874,42 +873,34 @@ line."
     (save-excursion
      (save-restriction
         (set-buffer buff)
-        (goto-char iruby-last-process-mark-point)
-        (when (eq  (get-text-property (point) 'field)
-                   ;; ^ NB comint sets that text property
-                   ;; typically on any output string
-                   'output)
-          ;; point should now be at the start of one of:
-          ;;  - output of a normal return value
-          ;;  - output of a stack trace
-          ;;  - the prompt string, under any format,
-          ;;    e.g if user entered an empty line
-          (cond
-            ((= mark (progn (end-of-line) (point)))
-             ;; ^ i.e if `iruby-last-process-mark-point' was at the
-             ;; first character of a prompt string -- such that the end
-             ;; of the prompt string, thus the process-mark for the
-             ;; process, can be reached by `end-of-line' from
-             ;; `iruby-last-process-mark-point' -- then there was no
-             ;; output except for the prompt string itself.
-            nil)
-           (t
-            (goto-char mark)
-            (previous-line)
-            (end-of-line)
-            ;; and now, for the output ...
-            ;;
-            ;; ... subsq to determine if it's a stack trace or
-            ;; some printed output from a normal return - in some way
-            ;; short of sending more text for eval in the subprocess
-            ;;
-            ;; FIXME in `iruby-show-last-output', if the last output
-            ;; appears to have been a stack trace4 a pop-up window
-            ;; and buffer should be presented - in lieu of activating
-            ;; the Emacs debugger with an Emacs error for the failed
-            ;; eval under Ruby
-            (buffer-substring-no-properties iruby-last-process-mark-point
-                                            (point)))))))))
+        (goto-char mark)
+        ;; Assuming  a single-line prompt, it should be sufficient to
+        ;; move to the previous line's end of line, here. This may in
+        ;; effect move point backwards past the prompt.
+        (previous-line)
+        (end-of-line)
+        (let* ((eol (point))
+               (prop (get-text-property eol 'field)))
+          (when (eq prop 'output)
+            ;; point was moved into an output field area, i.e
+            ;; not into an input field area. Thus, point is at
+            ;; the end of a section of output, in this branch
+            (cl-do ((at eol (1- at)))
+                   ;; NB this scans backwards for an input field,
+                   ;; such that would have a null 'field' text property
+                   ;; under comint. This is in lieu of potentially
+                   ;; inconsistent behaviors under some calls to
+                   ;; text-property-search-* functions in Emacs
+                   ((null (get-text-property at 'field))
+                    ;; return value, using 'at' plus two, one to move
+                    ;; point outside of the input field, secondly
+                    ;; to move point past the input field's end of
+                    ;; line
+                    (buffer-substring-no-properties (+ at 2) eol)))
+            ;; FIXME now to parse the text, pop up any backtrace
+            ;; navigation buffer, etc
+            ))))))
+
 
 (defun iruby-show-last-output (&optional proc)
   "Display the most recent output from the ruby process PROC in the
