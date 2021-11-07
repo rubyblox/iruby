@@ -130,7 +130,7 @@
   "Run Ruby process in a buffer"
   :group 'languages)
 
-(defcustom iruby-show-results t
+(defcustom iruby-show-last-output t
   "If non-nil, show results in the minibuffer after iruby-send commands"
   :type 'boolean
   :group 'iruby)
@@ -144,17 +144,18 @@ Also see the description of `ielm-prompt-read-only'."
 
 
 (defcustom iruby-ruby-irb-prefix '("-r" "irb" "-r" "irb/completion"
-                                   "-e" "IRB.start" "--")
+                                   "-e" "IRB.start" "--" "--inf-ruby-mode")
   "List of arguments for ruby, when running irb via ruby
 
-The last element in this list should generally be the string \"--\""
+THe last element in this list should generally be the string \"--\". Any
+arguments after that string would be provided to irb, specifically when
+launching irby under ruby"
   :type '(repeat string)
   :group 'iruby)
 
 
 (defcustom iruby-implementations
-  '(("irb"      iruby--impl-cmd-list
-     "--prompt" "default" "-r" "irb/completion")
+  '(("irb"	iruby--impl-cmd-list "-r" "irb/completion" "--inf-ruby-mode")
     ;; NB concerning behaviors of `iruby--impl-cmd-list':
     ;;
     ;; When launching irb via a "ruby" cmd, e.g "ruby" or "ruby27" etc,
@@ -164,12 +165,12 @@ The last element in this list should generally be the string \"--\""
     ;; in `iruby-ruby-irb-prefix', subsequetnly returned by
     ;; `iruby--impl-cmd-list'
     ;;
-    ("ruby"     iruby--impl-cmd-list "--prompt" "default")
-    ("jruby"    . "jruby -S irb --prompt default --noreadline -r irb/completion")
-    ("rubinius" . "rbx -r irb/completion")
-    ("yarv"     . "irb1.9 -r irb/completion")
-    ("macruby"  . "macirb -r irb/completion")
-    ("pry"      . "pry"))
+    ("ruby"	iruby--impl-cmd-list "--inf-ruby-mode")
+    ("jruby"	. "jruby -S irb --prompt default --noreadline -r irb/completion")
+    ("rubinius"	. "rbx -r irb/completion")
+    ("yarv"	. "irb1.9 -r irb/completion")
+    ("macruby"	. "macirb -r irb/completion")
+    ("pry"	. "pry"))
   "An alist mapping Ruby implementation names to Irb commands.
 CDR of each entry must be a string, a function, a list of strings or
 functions.
@@ -282,10 +283,12 @@ If the value is not a string, ask the user to choose from the
 available ones.  Otherwise, just use the value.
 
 Currently only affects Rails and Hanami consoles."
+  :group 'iruby
   :type '(choice
           ;; "the available ones" ??
           (const ask :tag "Ask the user")
           (string :tag "Environment name")))
+
 
 (defconst iruby-prompt-format
   (concat
@@ -574,6 +577,119 @@ Type \\[describe-mode] in the process buffer for the list of commands."
                                 (or (iruby-buffer)
                                     iruby-buffer))))
 
+(defun iruby-process-sentinel (process state)
+  "Process sentinel installed by `run-iruby-new'
+
+This function will display a warning after any change of state other
+than exit, hangup, or finished for a ruby subprocess initialized with
+`run-iruby-new'"
+  (unless (memq state '(exit hangup finished))
+    (warn "iruby process %s state changed to %s" process state)))
+
+
+(defun iruby-jump-to-last-process-mark ()
+  "Switch to the ruby process buffer and move point to the possition of
+the `process-mark' for the ruby process."
+  (interactive)
+  (let* ((proc (or (iruby-proc)
+                   (error "No iruby-proc found")))
+         (buff (and proc (process-buffer proc)))
+         (mark (process-mark proc)))
+    (switch-to-buffer buff)
+    (goto-char mark)))
+
+
+(defun iruby-jump-to-last-output ()
+  "Switch to the ruby process buffer and move point to the start of
+the last output text.
+
+If no output has been produced subsequent of the previous input to
+the ruby process - such as when entering an empty line of text, or
+within a continued block - `point' will then be positioned at the
+start of the line representing the last prompt displayed."
+  (interactive)
+  ;; NB this may generally reach the same point as
+  ;; the value of `comint-last-output-start'
+  (let* ((proc (or (iruby-proc)
+                   (error "No iruby-proc found")))
+         (buff (and proc (process-buffer proc))))
+    (switch-to-buffer buff)
+    (goto-char iruby-last-process-mark-point)))
+
+
+(defun iruby-get-last-output (&optional proc)
+  "Return the last output from the ruby process PROC as a string.
+
+If PROC is nil, the value returned by `iruby-proc' will be used
+as PROC
+
+Known limitation: This function requires that any prompt string
+in the ruby process, including any empty string, will have been
+displayed within a single line of text, beginning at start of
+line."
+  (let* ((proc (or proc (iruby-proc)
+                   (error "No iruby-proc found")))
+         (buff (and proc (process-buffer proc)))
+         (mark (process-mark proc)))
+    (save-excursion
+      (save-restriction
+        (set-buffer buff)
+        (goto-char iruby-last-process-mark-point)
+        (when (eq  (get-text-property (point) 'field)
+                   ;; ^ NB comint sets that text property
+                   ;; typically on any output string
+                   'output)
+          ;; point should now be at the start of one of:
+          ;;  - output of a normal return value
+          ;;  - output of a stack trace
+          ;;  - the prompt string, under any format,
+          ;;    e.g if user entered an empty line
+          (cond
+            ((= mark (progn (end-of-line) (point)))
+             ;; ^ i.e if `iruby-last-process-mark-point' was at the
+             ;; first character of a prompt string -- such that the end
+             ;; of the prompt string, thus the process-mark for the
+             ;; process, can be reached by `end-of-line' from
+             ;; `iruby-last-process-mark-point' -- then there was no
+             ;; output except for the prompt string itself.
+            nil)
+           (t
+            (goto-char mark)
+            (previous-line)
+            (end-of-line)
+            ;; and now, for the output ...
+            ;;
+            ;; ... subsq to determine if it's a stack trace or
+            ;; some printed output from a normal return - in some way
+            ;; short of sending more text for eval in the subprocess
+            ;;
+            ;; FIXME in `iruby-show-last-output', if the last output
+            ;; appears to have been a stack trace4 a pop-up window
+            ;; and buffer should be presented - in lieu of activating
+            ;; the Emacs debugger with an Emacs error for the failed
+            ;; eval under Ruby
+            (buffer-substring-no-properties comint-last-output-start
+                                            (point)))))))))
+
+(defun iruby-show-last-output (&optional proc)
+  "Display the most recent output from the ruby process PROC in the
+minibuffer. If no output except a prompt has been produced since the
+last input to the ruby process, this function will display a message
+indicating the absence of any new output text.
+
+The process returned by `iruby-proc' will be used as the default PROC
+
+See also: `iruby-get-last-output', `iruby-print-result'"
+  (interactive)
+  (let* ((%proc (or proc (iruby-proc)))
+         (whence (buffer-name (process-buffer %proc)))
+         (last (iruby-get-last-output %proc)))
+    (if last
+        (message "%s: %s" whence last)
+      (message "%s: No output" whence)
+      )))
+
+
 (defun run-iruby-new (command &optional name)
   "Create a new inferior Ruby process in a new buffer.
 
@@ -585,8 +701,10 @@ the buffer, defaults to \"ruby\"."
   ;;
   (setq name (or name "ruby"))
 
+  (make-variable-buffer-local 'iruby-last-process-mark-point)
+
   (let ((commandlist
-         ;; FIXME Need to preserve the list form here
+         ;; ** FIXME ** Need to preserve any list form, to here
          (split-string-and-unquote command))
         (buffer (current-buffer))
         (process-environment process-environment)
@@ -610,21 +728,31 @@ the buffer, defaults to \"ruby\"."
     ;; e.g  with "\t" being a literal tab character on input,
     ;; "def a;\tend" is read as "def a;end"
     ;;
-    (set-buffer (apply 'make-comint-in-buffer
-                       name
-                       (generate-new-buffer-name (format "*%s*" name))
-                       (car commandlist)
-                       nil (cdr commandlist)))
+
+    (setq buffer
+          (apply 'make-comint-in-buffer
+                 name
+                 (generate-new-buffer-name (format "*%s*" name))
+                 (car commandlist)
+                 nil (cdr commandlist)))
+
+    (set-buffer buffer)
     (iruby-mode)
-    (iruby-remember-ruby-buffer buffer)
-    (push (current-buffer) iruby-buffers)
+    (add-hook 'comint-preoutput-filter-functions  'iruby-update-last-mark nil t)
+    (iruby-remember-ruby-buffer buffer) ;; TBD
+    (push buffer iruby-buffers) ;; TBD
     (setq iruby-buffer-impl-name name
-          iruby-buffer-command command))
+          iruby-buffer-command command)
 
-  (unless (and iruby-buffer (comint-check-proc iruby-buffer))
-    (setq iruby-buffer (current-buffer)))
+    (set-process-sentinel (or (get-buffer-process buffer)
+                              (error "no process found in buffer %s" buffer))
+                          'iruby-process-sentinel)
 
-  (pop-to-buffer (current-buffer)))
+    (unless (and iruby-buffer (comint-check-proc iruby-buffer))
+      (setq iruby-buffer buffer))
+
+    (pop-to-buffer buffer)))
+
 
 (defun run-iruby-or-pop-to-buffer (command &optional name buffer)
   ;; NB used in
@@ -664,32 +792,61 @@ Must not contain ruby meta characters.")
 
 (defconst iruby-eval-separator "")
 
-(defun iruby-send-string (str)
-  "Send the provided string for evaluation as a ruby expression, in the
-irb process buffer.
 
-See also: commands `iruby-send-region', `iruby-send-definition',
-`iruby-send-block', other iruby-send commands, and `iruby-show-result'"
-  (let ((term (apply 'format iruby-send-terminator
-                     (random) (current-time)))
-        (proc (iruby-proc)))
+(defun iruby-send-string (proc str &optional file line)
+  "Send the provided string for evaluation as a ruby expression
+in the ruby process buffer.
+
+FILE and LINE, if non-nil, will be provided respectively as the
+file and line number values for source locations under 'eval' in
+the ruby process.
+
+If FILE is nil, the string value \"(Unknown)\" will be used. The
+effective FILE value will then be provided to the Ruby process
+within single quotes.
+
+LINE, if non-nil, must represent an integer value. If LINE
+is nil, the value zero will be used.
+
+See also:
+ `iruby-send-region',`iruby-send-definition',`iruby-send-block'
+ `iruby-show-last-output'"
+  (let* ((term (apply 'format iruby-send-terminator
+                      (random) (current-time))))
     (save-excursion
       (save-restriction
-        ;; compilation-parse-errors parses from second line.
-        (let ((m (process-mark proc)))
+        (let ((m (process-mark proc))
+              ;; FIXME line-number disparity for multi-line buffer
+              ;; regions may lead to confusion under ruby source
+              ;; debugging
+              )
+          ;; compilation-parse-errors parses from second line.
           (set-buffer (marker-buffer m))
           (goto-char m)
           (insert iruby-eval-separator "\n")
-          (set-marker m (point)))
-        (comint-send-string proc (format "eval <<'%s', %s;\n"
-                                         term iruby-eval-binding))
-        (comint-send-string proc str)
-        (comint-send-string proc (concat "\n" term "\n"))))))
+          (set-marker m (point))
+          (comint-send-string proc (format "eval <<'%s', %s , '%s', %s;\n"
+                                           term iruby-eval-binding
+                                           (or file "(Unknown)")
+                                           (or line 0)))
+          (comint-send-string proc str)
+          (comint-send-string proc (concat "\n" term "\n")))))))
 
-;; test
-;; (iruby-send-string "def a; end")
+;; - test - expecting a string representation of a ruby symbol
+;;
+;; (iruby-send-string (iruby-proc) "def a; end")
 ;; (iruby-get-result)
-
+;;
+;; - test - expecting a warning => emacs error, on redefinition of a
+;;   constant within the ruby subprocess
+;;
+;; (dotimes (n 2 nil) (iruby-send-string (iruby-proc) "module ABC; D=:EF; end"))
+;; (iruby-get-result)
+;; ^ FIXME this test shows a quirk in iruby-get-result, presently.
+;;   iruby-get-result will capture the output of both of the input
+;;   expressions to the Ruby process, together with the prompt string
+;;   conctatenated before the second expression - this, under a
+;;   :DEFAULT irb prompt, at least
 
 (defun iruby-get-result ()
   "Return the result of the last evaluation in the ruby process buffer,
@@ -698,7 +855,7 @@ as a string
 If evaluation has failed, this function will present an error in Emacs
 with the message from the failed evaluation.
 
-See also: `iruby-show-result' [command], `iruby-print-result' [command]
+See also: `iruby-show-last-output' [command], `iruby-print-result' [command]
 and `iruby-eval-binding' [constant]"
   ;; FIXME may accept an additional arg to indicate which process buffer
   ;; to use, such that would be passed from each calling function, for
@@ -722,47 +879,65 @@ and `iruby-eval-binding' [constant]"
             (error "%s" s)))
       (buffer-substring-no-properties (point) (line-end-position)))))
 
-(defun iruby-show-result ()
-  "Display the result of the last evaluation, using the minibuffer.
-
-If the evaluation has failed, a corresponding error will be
-produced in Emacs.
-
-The result may also be displayed in the *Messages* buffer
-
-See also: `iruby-print-result', `iruby-get-result'"
-  ;; FIXME for multi-line results, use a pop-up - similar to magit
-  (interactive)
-  (message "%s" (iruby-get-result)))
-
 
 (defun iruby-print-result ()
-  "Print the result of the last evaluation to the current buffer
+  "Print the result displayed under the last evaluation in the ruby
+subproess to the current buffer.
 
-If the evaluation has failed, a corresponding error will be
-produced in Emacs.
+This function will add an initial newline after the position at `point'
+then printing the text of the result within the comment syntax for the
+current buffer. `point' will not be advacned by this function.
 
-See also: `iruby-show-result', `iruby-get-result'"
-  ;; FIXME for multi-line results, use a pop-up - similar to magit
+See also: `iruby-show-last-output', `iruby-get-last-output'"
   (interactive)
-  (print (iruby-get-result)
-         (current-buffer)))
+  (save-excursion
+    (let ((start (point)))
+      (newline)
+      (princ (iruby-get-last-output (iruby-proc))
+             (current-buffer))
+      (comment-region start (point)))))
 
 
-;; FIXME define iruby-send-file,
-;;
-;; That function may assume that the irb process
-;; and Emacs are processes on the same network host.
+(defun iruby-update-last-mark (string)
+  "Update `iruby-last-process-mark-point' and return STRING,
+before STRING may be written to the process buffer.
+
+This function should be called with a ruby process buffer as
+the current buffer.
+
+This is a hook function for `comint-preoutput-filter-functions'"
+  ;; NB The string may include any prompt text,
+  ;; generally as the last line in the string
+  (setq  iruby-last-process-mark-point
+         (marker-position
+          (process-mark
+           (or (get-buffer-process (current-buffer))
+               (error "No process in buffer %s"
+                      (current-buffer))))))
+  string)
 
 (defun iruby-send-region (start end)
-  "Send a region of text from the current buffer to the inferior Ruby process.
+  "Send a region of text from the current buffer to the ruby process.
 
-When called interactively, this operates on any current region in the
-buffer. Prefix argumet will provide the value of `print'"
+When called interactively, this function operates on any region
+in the current buffer."
   (interactive "r")
-  (iruby-send-string (buffer-substring start end))
-  (when iruby-show-results
-    (iruby-show-result)))
+  ;; NB line-number-mode in Emacs starts counting at 1.
+  ;; So does this, but it get a bit confounded from there...
+  ;;
+  ;; FIXME this still does not provide line-number parity
+  ;; from A) source locations in backtrace under irb
+  ;; and B) line numbers in the buffer, for any multi-line
+  ;; region
+  ;;
+  ;; (warn "Starting at %s" (line-number-at-pos start t))
+  (let ((proc (iruby-proc)))
+    (iruby-send-string proc (buffer-substring-no-properties start end)
+                       (or buffer-file-name (buffer-name))
+                       (line-number-at-pos start t))
+    (when iruby-show-last-output
+      (iruby-show-last-output proc))))
+
 
 (defun iruby-send-definition ()
   "Send the current definition to the inferior Ruby process."
@@ -777,7 +952,7 @@ buffer. Prefix argumet will provide the value of `print'"
   "Send the previous sexp to the inferior Ruby process."
   (interactive "P")
   (iruby-send-region (save-excursion (ruby-backward-sexp) (point))
-                    (point)))
+                     (point)))
 
 (defun iruby-send-block ()
   "Send the current block to the inferior Ruby process."
