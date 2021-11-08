@@ -290,6 +290,32 @@ Currently only affects Rails and Hanami consoles."
           (string :tag "Environment name")))
 
 
+(defcustom iruby-output-wait 0.001
+  "Number of seconds for asynchronous delay in `iruby-show-last-output'
+
+This value will provide a delay before displaying the result of
+the last evaluation under  `iruby-send-region', when both
+`iruby-show-last-output' and `iruby-threads' are non-nil.
+
+Under such a configuration, `iruby-send-region' will create a separate
+thread such that will call `iruby-show-last-output' after this number of
+seconds of delay. This may serve to ensure that the iruby process has
+produced any complete output, before `iruby-show-last-output' is
+evaluated.  Moreover, it may serve to ensusure that the environment in
+which `iruby-show-last-output' is called will be the current environment
+as subsequent of the evaluation of `iruby-send-region' in the main Emacs
+thread.
+
+This value should be a positive number."
+  :group 'iruby)
+
+
+(defvar iruby-threads (featurep 'threads)
+  "If non-nil, threads are available in this Emacs.
+
+See also: `iruby-output-wait'")
+
+
 (defconst iruby-prompt-format
   (concat
    (mapconcat
@@ -1152,10 +1178,33 @@ in the current buffer."
       (save-restriction
         (iruby-send-string proc (buffer-substring-no-properties start end)
                            (or buffer-file-name (buffer-name))
-                           (line-number-at-pos start t))
-        (when iruby-show-last-output
-          ;; TBD synchronization ...
-          (iruby-show-last-output proc))))))
+                           (1+ (line-number-at-pos start t)))
+        (when (and iruby-show-last-output iruby-threads)
+          ;; NB may need to use multithreading, to be able to capture the
+          ;; output from the process just launched, subsequent of the
+          ;; control flow in the function that launched that process
+          (let* ((wsecs (or (and (numberp iruby-output-wait)
+                                 (plusp iruby-output-wait)
+                                 iruby-output-wait)
+                            (default-value 'iruby-output-wait)))
+                 (thr (make-thread
+                       (cl-coerce `(lambda ()
+                                     (sleep-for ,wsecs)
+                                     (iruby-show-last-output ,proc)
+                                    ;;; too much for a short ":[]="
+                                    ;;; a whole output buffer ...
+                                     ;;
+                                     ;; (set-buffer (get-buffer-create "*frob*"))
+                                     ;; (terpri)
+                                     ;; (princ (iruby-get-last-output ,proc))
+                                     )
+                                  'function)
+                       (format "iruby output monitor %s"
+                               (mapconcat #'number-to-string (current-time) "-")))))
+            ))))))
+
+;; NB
+;; (thread-last-error t)
 
 
 (defun iruby-send-definition ()
