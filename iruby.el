@@ -366,9 +366,6 @@ Caches the last pair used in the last `iruby-load-file' command.
 Used for determining the default in the
 next one.")
 
-(defvar iruby-at-top-level-prompt-p t)
-(make-variable-buffer-local 'iruby-at-top-level-prompt-p)
-
 (defvar iruby-last-prompt nil)
 (make-variable-buffer-local 'iruby-last-prompt)
 
@@ -493,10 +490,8 @@ The following commands are available:
 (defun iruby-output-filter (output)
   "Check if the current prompt is a top-level prompt."
   (unless (zerop (length output))
-    (setq iruby-last-prompt (car (last (split-string output "\n")))
-          iruby-at-top-level-prompt-p
-          (string-match iruby-first-prompt-pattern
-                        iruby-last-prompt))))
+    ;; TBD usage of iruby-last-prompt at present
+    (setq iruby-last-prompt (car (last (split-string output "\n"))))))
 
 ;; adapted from replace-in-string in XEmacs (subr.el)
 (defun iruby-remove-in-string (str regexp)
@@ -1158,6 +1153,7 @@ This is a hook function for `comint-preoutput-filter-functions'"
     string)
 
 
+
 (defun iruby-send-region (start end)
   "Send a region of text from the current buffer to the ruby process.
 
@@ -1216,11 +1212,13 @@ in the current buffer."
       (ruby-beginning-of-defun)
       (iruby-send-region (point) end))))
 
+
 (defun iruby-send-last-sexp ()
   "Send the previous sexp to the inferior Ruby process."
   (interactive "P")
   (iruby-send-region (save-excursion (ruby-backward-sexp) (point))
                      (point)))
+
 
 (defun iruby-send-block ()
   "Send the current block to the inferior Ruby process."
@@ -1232,12 +1230,15 @@ in the current buffer."
       (ruby-beginning-of-block)
       (iruby-send-region (point) end))))
 
+
 (defvar iruby-last-ruby-buffer nil
   "The last buffer we switched to `iruby' from.")
 (make-variable-buffer-local 'iruby-last-ruby-buffer)
 
+
 (defun iruby-remember-ruby-buffer (buffer)
   (setq iruby-last-ruby-buffer buffer))
+
 
 (defun iruby-switch-to-inf (eob-p)
   "Switch to the ruby process buffer.
@@ -1254,6 +1255,7 @@ With argument, positions cursor at end of buffer."
          (push-mark)
          (goto-char (point-max)))))
 
+
 (defun iruby-switch-to-last-ruby-buffer ()
   "Switch back to the last Ruby buffer."
   (interactive)
@@ -1262,12 +1264,14 @@ With argument, positions cursor at end of buffer."
       (pop-to-buffer iruby-last-ruby-buffer)
     (message "Don't know the original Ruby buffer")))
 
+
 (defun iruby-send-region-and-go (start end)
   "Send the current region to the inferior Ruby process.
 Then switch to the process buffer."
   (interactive "r")
   (iruby-send-region start end)
   (iruby-switch-to-inf t))
+
 
 (defun iruby-send-definition-and-go ()
   "Send the current definition to the inferior Ruby.
@@ -1276,12 +1280,14 @@ Then switch to the process buffer."
   (iruby-send-definition)
   (iruby-switch-to-inf t))
 
+
 (defun iruby-send-block-and-go ()
   "Send the current block to the inferior Ruby.
 Then switch to the process buffer."
   (interactive)
   (iruby-send-block)
   (iruby-switch-to-inf t))
+
 
 (defun iruby-load-file (file-name)
   "Load a Ruby file into the inferior Ruby process."
@@ -1290,9 +1296,11 @@ Then switch to the process buffer."
   (comint-check-source file-name) ; Check to see if buffer needs saved.
   (setq iruby-prev-l/c-dir/file (cons (file-name-directory    file-name)
                                      (file-name-nondirectory file-name)))
+  ;; FIXME test `iruby-show-result' after this function && call if showp
   (comint-send-string (iruby-proc) (concat "(load \""
                                               file-name
                                               "\"\)\n")))
+
 
 (defun iruby-send-buffer ()
   "Send the current buffer to the inferior Ruby process."
@@ -1301,12 +1309,14 @@ Then switch to the process buffer."
     (widen)
     (iruby-send-region (point-min) (point-max))))
 
+
 (defun iruby-send-buffer-and-go ()
   "Send the current buffer to the inferior Ruby process.
 Then switch to the process buffer."
   (interactive)
   (iruby-send-buffer)
   (iruby-switch-to-inf t))
+
 
 (defun iruby-send-line ()
   "Send the current line to the inferior Ruby process."
@@ -1315,6 +1325,7 @@ Then switch to the process buffer."
     (widen)
     (iruby-send-region (point-at-bol) (point-at-eol))))
 
+
 (defun iruby-send-line-and-go ()
   "Send the current line to the inferior Ruby process.
 Then switch to the process buffer."
@@ -1322,11 +1333,13 @@ Then switch to the process buffer."
   (iruby-send-line)
   (iruby-switch-to-inf t))
 
+
 (defun iruby-escape-single-quoted (str)
   "Escape single quotes, double quotes and newlines in STR."
   (replace-regexp-in-string "'" "\\\\'"
     (replace-regexp-in-string "\n" "\\\\n"
       (replace-regexp-in-string "\\\\" "\\\\\\\\" str))))
+
 
 (defun iruby-completions (prefix)
   "Return a list of completions for the Ruby expression starting with EXPR."
@@ -1339,72 +1352,111 @@ Then switch to the process buffer."
          (comint-filt (process-filter proc))
          (kept "") completions
          ;; Guard against running completions in parallel:
-         iruby-at-top-level-prompt-p)
+         )
+    ;;;; (warn "Completions. prefix %S expr %S" prefix expr)
     (unless (equal "(rdb:1) " iruby-last-prompt)
-      (set-process-filter proc (lambda (proc string) (setq kept (concat kept string))))
+      (set-process-filter proc
+                          (lambda (proc string)
+                            (setq kept (concat kept string))
+                            ;; ensure that the string is not displayed:
+                            nil))
       (unwind-protect
           (let ((completion-snippet
                  (format
                   (concat
-                   "proc { |expr, line|"
-                   "  require 'ostruct';"
-                   "  old_wp = defined?(Bond) && Bond.started? && Bond.agent.weapon;"
-                   "  begin"
-                   "    Bond.agent.instance_variable_set('@weapon',"
-                   "      OpenStruct.new(:line_buffer => line)) if old_wp;"
-                   "    if defined?(_pry_.complete) then"
-                   "      puts _pry_.complete(expr)"
-                   "    elsif defined?(pry_instance.complete) then"
-                   "      puts pry_instance.complete(expr)"
-                   "    else"
-                   "      completer = if defined?(_pry_) then"
-                   "        Pry.config.completer.build_completion_proc(binding, _pry_)"
-                   "      elsif old_wp then"
-                   "        Bond.agent"
-                   "      elsif defined?(IRB::InputCompletor::CompletionProc) then"
-                   "        IRB::InputCompletor::CompletionProc"
-                   "      end and puts completer.call(expr).compact"
-                   "    end"
-                   "  ensure"
-                   "    Bond.agent.instance_variable_set('@weapon', old_wp) if old_wp "
-                   "  end "
-                   "}.call('%s', '%s')\n")
+                   "IRB::InputCompletor::CompletionProc.call('%s','%s').compact.each{ |x| puts x };"
+                   "nil;\n"
+
+                   ;; NB supporting IRB only , for now
+                   ;;
+                   ;; FIXME This API needs a better way to store
+                   ;; implementation-specific properties as constant
+                   ;; expressions, under custom - cmd, args,
+                   ;; eval contxt, this bit, ...
+
+                   ;; "proc { |expr, line|"
+                   ;; "  require 'ostruct';"
+                   ;; "  old_wp = defined?(Bond) && Bond.started? && Bond.agent.weapon;"
+                   ;; "  begin"
+                   ;; "    Bond.agent.instance_variable_set('@weapon',"
+                   ;; "      OpenStruct.new(:line_buffer => line)) if old_wp;"
+                   ;; "    if defined?(_pry_.complete) then"
+                   ;; "      puts _pry_.complete(expr)"
+                   ;; "    elsif defined?(pry_instance.complete) then"
+                   ;; "      puts pry_instance.complete(expr)"
+                   ;; "    else"
+                   ;; "      completer = if defined?(_pry_) then"
+                   ;; "        Pry.config.completer.build_completion_proc(binding, _pry_)"
+                   ;; "      elsif old_wp then"
+                   ;; "        Bond.agent"
+                   ;; "      elsif defined?(IRB::InputCompletor::CompletionProc) then"
+                   ;; "        IRB::InputCompletor::CompletionProc"
+                   ;; "      end and puts completer.call(expr).compact"
+                   ;; "    end"
+                   ;; "  ensure"
+                   ;; "    Bond.agent.instance_variable_set('@weapon', old_wp) if old_wp "
+                   ;; "  end "
+                   ;; "}.call('%s', '%s')\n"
+
+                   )
                   (iruby-escape-single-quoted expr)
                   (iruby-escape-single-quoted line))))
+            ;;; (warn "in completions section. using %s" completion-snippet)
             (process-send-string proc completion-snippet)
             (while (and (not (string-match iruby-prompt-pattern kept))
+                        ;; how now :: ?
                         (accept-process-output proc 2)))
             (setq completions (butlast (split-string kept "\r?\n") 2))
             ;; Subprocess echoes output on Windows and OS X.
             (when (and completions (string= (concat (car completions) "\n") completion-snippet))
               (setq completions (cdr completions))))
         (set-process-filter proc comint-filt)))
+    ;;; (warn "At end, kept: %S" kept)
+    ;;; (warn "At end, completions: %S" completions)
     (mapcar
      (lambda (str)
        (substring str prefix-offset))
      completions)))
 
+
 (defconst iruby-ruby-expr-break-chars " \t\n\"\'`><,;|&{(")
 
 (defun iruby-completion-bounds-of-prefix ()
   "Return bounds of expression at point to complete."
-  (let ((iruby-ruby-expr-break-chars
+  (let ((iruby-ruby-expr-break-chars ;; NB this is the constant's sole usage
          (concat iruby-ruby-expr-break-chars ".")))
     (iruby-completion-bounds-of-expr-at-point)))
 
+
 (defun iruby-completion-bounds-of-expr-at-point ()
   "Return bounds of expression at point to complete."
-  (when (not (memq (char-syntax (following-char)) '(?w ?_)))
-    (save-excursion
-      (let ((end (point)))
-        (skip-chars-backward (concat "^" iruby-ruby-expr-break-chars))
-        (cons (point) end)))))
+  (let ((s (char-syntax (following-char))))
+    (cond
+      ((or (eq s ?w) (eq s ?_)))
+      (t
+       (save-excursion
+         (when (eq s ?.)
+           (backward-char))
+         (let ((bounds (bounds-of-thing-at-point 'sexp)))
+           (when (consp (cdr bounds))
+             ;; NB fix up some inconsistent syntax
+             ;; from thingatpt
+             (setf (cdr bonds) (cadr bounds)))
+           ;; (warn "Bounds %S" bounds)
+           (when (eq s ?.)
+             ;; when completing at punctuation
+             (setf (cdr bounds)
+                   (1+ (cdr bounds))))
+           bounds
+           ))))))
+
 
 (defun iruby-completion-expr-at-point ()
   "Return expression at point to complete."
   (let ((bounds (iruby-completion-bounds-of-expr-at-point)))
     (and bounds
-         (buffer-substring (car bounds) (cdr bounds)))))
+         (buffer-substring-no-properties (car bounds) (cdr bounds)))))
+
 
 (defun iruby-completion-at-point ()
   "Retrieve the list of completions and prompt the user.
@@ -1412,10 +1464,10 @@ Returns the selected completion or nil."
   (let ((bounds (iruby-completion-bounds-of-prefix)))
     (when bounds
       (list (car bounds) (cdr bounds)
-            (when iruby-at-top-level-prompt-p
-              (if (fboundp 'completion-table-with-cache)
-                  (completion-table-with-cache #'iruby-completions)
-                (completion-table-dynamic #'iruby-completions)))))))
+            (if (fboundp 'completion-table-with-cache)
+                (completion-table-with-cache #'iruby-completions)
+              (completion-table-dynamic #'iruby-completions))))))
+
 
 (defvar iruby-orig-compilation-mode nil
   "Original compilation mode before switching to `iruby-mode'.")
@@ -1425,6 +1477,7 @@ Returns the selected completion or nil."
 
 (defvar iruby-orig-error-regexp-alist nil
   "Original `compilation-error-regexp-alist' before switching to `iruby-mode.'")
+
 
 (defun iruby-switch-from-compilation ()
   "Make the buffer writable and switch to `iruby-mode'.
