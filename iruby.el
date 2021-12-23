@@ -131,7 +131,6 @@
   :group 'languages)
 
 
-
 (defcustom iruby-load-file-history-limit history-length
   "File name history liimit for `iruby-load-file'.
 
@@ -149,6 +148,14 @@ The default value is derived from `history-length'"
                             :error
                             (format "Not a recognized history limit: %S" it))))))
   ;; TBD :group 'iruby-files
+  :group 'iruby)
+
+(defcustom iruby-use-project-directories t
+  "configuration for `iruby-get-prevailing-buffer'
+
+This variable determines whether to check for buffers specific to
+individual project directories under `iruby-get-prevailing-buffer'."
+  :type 'boolean
   :group 'iruby)
 
 (defgroup iruby-ui nil
@@ -569,9 +576,6 @@ Used by these commands to determine defaults.")
 The length of this history data under `iruby-load-file' is configured
 with `iruby-load-file-history-limit'")
 
-(defvar iruby-last-prompt nil)
-(make-variable-buffer-local 'iruby-last-prompt)
-
 (defconst iruby-error-regexp-alist
   '(("^SyntaxError: \\(?:compile error\n\\)?\\([^\(].*\\):\\([1-9][0-9]*\\):" 1 2)
     ("^\tfrom \\([^\(].*\\):\\([1-9][0-9]*\\)\\(:in `.*'\\)?$" 1 2)))
@@ -651,11 +655,9 @@ The following commands are available:
  (defvar iruby-buffer nil
    "When set, the iruby process buffer to use for this buffer.
 
-If unset, `iruby-last-ruby-buffer' may be used.
+If unset, `iruby-default-ruby-buffer' may be used.
 
 See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
-
-(defvar iruby-buffers nil "List of Ruby process buffers.")
 
 (make-variable-buffer-local
  (defvar iruby-buffer-command nil "The command used to run Ruby shell"))
@@ -700,13 +702,16 @@ to continue it.
 The following commands are available:
 
 \\{iruby-mode-map}"
-  (setq comint-prompt-regexp iruby-prompt-pattern)
-  (ruby-mode-variables)
+  (iruby-configure-syntax-table (current-buffer) iruby-ruby-syntax)
+  (setq comint-prompt-regexp iruby-prompt-pattern) ;; TBD. see next @ read-only
+  (ruby-mode-variables) ;; NB ruby-mode dep. See alt enh-ruby-mode.el
   (when (bound-and-true-p ruby-use-smie)
     (set (make-local-variable 'smie-forward-token-function)
          #'iruby-smie--forward-token)
     (set (make-local-variable 'smie-backward-token-function)
          #'iruby-smie--backward-token))
+
+  (add-hook 'comint-preoutput-filter-functions 'iruby-preoutput-filter nil t)
   (add-hook 'comint-output-filter-functions 'iruby-output-filter nil t)
   (setq comint-get-old-input 'iruby-get-old-input)
   (set (make-local-variable 'compilation-error-regexp-alist)
@@ -716,12 +721,6 @@ The following commands are available:
     (setq comint-process-echoes t))
   (add-hook 'completion-at-point-functions 'iruby-completion-at-point nil t)
   (compilation-shell-minor-mode t))
-
-(defun iruby-output-filter (output)
-  "Check if the current prompt is a top-level prompt."
-  (unless (zerop (length output))
-    ;; TBD usage of iruby-last-prompt at present
-    (setq iruby-last-prompt (car (last (split-string output "\n"))))))
 
 ;; adapted from replace-in-string in XEmacs (subr.el)
 (defun iruby-remove-in-string (str regexp)
@@ -770,11 +769,11 @@ previous prompt preceding POINT, similarly to the beginning of the
 input area.
 
 If POINT is not within an input area, point will be moved into the
-previous input area before point will be moved to the end of the
-previous prompt.
+previous input area, then moved to the end of the previous prompt.
 
 This function assumes that the irb prompt is configured to not display
-additional printable text during continued input.
+additional printable text during continued input, such as with the inf
+ruby prompt under irb.
 
 See also: `iruby-jump-to-input-end', `iruby-input-at-point'"
   (interactive "d")
@@ -961,18 +960,10 @@ See also: `iruby-jump-to-process-mark', `iruby-jump-to-last-output'"
     (when match
       (goto-char (prop-match-beginning match)))))
 
-
-(defun iruby-buffer ()
-  "Return iruby buffer for the current buffer or project."
-  (let ((current-dir (locate-dominating-file default-directory
-                                             #'iruby-console-match)))
-    (and current-dir
-         (iruby-buffer-in-directory current-dir))))
-
 (defun iruby-buffer-in-directory (dir)
   (setq dir (expand-file-name dir))
   (catch 'buffer
-    (dolist (buffer iruby-buffers)
+    (dolist (buffer (mapcar #'cdr iruby-process-buffers))
       (when (buffer-live-p buffer)
         (with-current-buffer buffer
           (when (string= (expand-file-name default-directory) dir)
@@ -1021,8 +1012,12 @@ to that buffer. Otherwise create a new buffer."
     (or (when (eq major-mode 'iruby-mode)
           (current-buffer))
         (check-buffer iruby-buffer)
-        (check-buffer (iruby-buffer))
-        (check-buffer iruby-last-ruby-buffer))))
+        (when iruby-use-project-directories
+          (let ((project-dir (locate-dominating-file default-directory
+                                                     #'iruby-console-match)))
+            (when project-dir
+              (check-buffer (iruby-buffer-in-directory project-dir)))))
+        (check-buffer iruby-default-ruby-buffer))))
 
 
 ;;;###autoload
@@ -1322,7 +1317,7 @@ The `process' should be an Emacs process object, such that may be
 determined with `iruby-read-process'.
 
 If `buffer' is the symbol `t', this will set the global iRuby process
-under `iruby-last-ruby-buffer'.
+under `iruby-default-ruby-buffer'.
 
 Otherwise, `buffer' should denote an active source buffer, typically a
 buffer in some Ruby source file mode. In this case, the `process' will
@@ -1351,7 +1346,7 @@ this function will be stored by `desktop-save' and restored by
       ((eq buffer t)
        (unless (process-live-p process)
          (warn "Using extant process %s globally" process ))
-       (setq iruby-last-ruby-buffer
+       (setq iruby-default-ruby-buffer
              (iruby-process-buffer process)))
       ((eq buffer procbuff)
        (error "Cannot change the iRuby process for process buffer %s" buffer))
@@ -1459,8 +1454,8 @@ See also: `iruby-process-buffer', `iruby-restart-process',
         ;;; presently used as a first call in `iruby-close-process'
         (comint-send-eof))
       (iruby-remove-process-buffer whence)
-      (when (eq whence iruby-last-ruby-buffer)
-        (setq iruby-last-ruby-buffer (caar iruby-process-buffers))
+      (when (eq whence iruby-default-ruby-buffer)
+        (setq iruby-default-ruby-buffer (caar iruby-process-buffers))
       ))))
 
 (add-hook 'kill-buffer-hook 'iruby-drop-process)
@@ -1638,7 +1633,6 @@ the buffer, defaults to \"ruby\"."
 
     (set-buffer buffer)
     (iruby-mode)
-    (iruby-configure-syntax-table buffer iruby-ruby-syntax)
     (setq iruby-buffer-impl-name name
           iruby-buffer-command command
           iruby-impl-binding-expr (ignore-errors
@@ -1648,30 +1642,19 @@ the buffer, defaults to \"ruby\"."
 
     (unless (boundp 'desktop-save-buffer)
       (make-variable-buffer-local
+       ;; ensure the variable is defined as buffer-local,
+       ;; so that this does not become a global default value
+       ;; once desktop.el is loaded
        (defvar desktop-save-buffer nil
          "Buffer-local configuration for `desktop-save'
 
 This variable is normally initialized by the Emacs desktop library,
 unless that feature is not available")))
+
     (setq desktop-save-buffer 'iruby-desktop-misc-data)
 
-    (add-hook 'comint-preoutput-filter-functions  'iruby-update-last-mark nil t)
-    (iruby-remember-ruby-buffer buffer) ;; TBD
-    (push buffer iruby-buffers) ;; TBD
+    (iruby-remember-ruby-buffer buffer)
 
-    (unless (and iruby-buffer (iruby-process-running-p iruby-buffer))
-      (when iruby-buffer
-        (let ((proc (get-buffer-process iruby-buffer)))
-          (when (and proc (not (eq (process-status proc) 'run)))
-            ;; NB trying a cleanup call, as when the buffer
-            ;; process did not exit cleanly - seen during some testing
-            ;; with Ruby Gtk support, in which they iruby process state
-            ;; was changed externally, from within gtk, to a state
-            ;; "trace/breakpoint trap (core dumped)"
-            ;;
-            ;; FIXME the call-flow needs to be implemented more cleanly here
-            (kill-process proc))))
-      (setq iruby-buffer buffer))
     ;; NB this returns a buffer object
     (iruby-switch-to-process (get-buffer-process buffer))
     ))
@@ -1716,8 +1699,16 @@ See also: `iruby-get-prevailing-buffer'"
   "Template for irb here document terminator.
 Must not contain ruby meta characters.")
 
+(defun iruby-bounds-of-thing (kind)
+  "A workaround for syntactic quirks of `bounds-of-thing-at-point'
 
-(defconst iruby-eval-separator "")
+This function may return nil, or a cons whose CAR and CDR represent the
+bounds of a thing at point of type `kind', in the current buffer"
+  (let* ((bounds (bounds-of-thing-at-point 'sexp))
+         (second (cdr bounds)))
+    (when (consp second)
+      (setf (cdr bounds) (car second)))
+    bounds))
 
 
 (defun iruby-send-string (proc str &optional file line)
@@ -1752,7 +1743,7 @@ See also:
                (concat "\n" term "\n")))
           (set-buffer (marker-buffer m))
           (goto-char m)
-          (insert iruby-eval-separator "\n")
+          (insert "\n")
           (set-marker m (point))
           (comint-send-string proc hdr)
           (comint-send-string proc str)
@@ -1824,8 +1815,39 @@ This is a hook function for `comint-preoutput-filter-functions'"
                              (error "No process in buffer %s"
                                     (current-buffer)))))))
          (setq iruby-last-process-mark-point markerpt))))
+    ;; must return the string, if used directly under
+    ;; `comint-preoutput-filter-functions'
     string)
 
+(defun iruby-preoutput-filter (output)
+  "Pre-output hook function for iRuby process buffers
+
+This function is ordinarily called in an iruby-mode buffer,
+as feature of comint output processing. The value
+of `output' will be the string that was received by comint.
+The value returned by this function will be applied for
+further output processing by comint, as the text to be
+inserted to the iruby-mode buffer
+
+See also: `comint-preoutput-filter-functions' [variable]"
+
+  (iruby-update-last-mark output)
+
+  output
+  )
+
+(defun iruby-output-filter (output)
+  "Post-output hook function for iRuby process buffers
+
+This function is ordinarily called in an iruby-mode buffer,
+after the next intput prompt has been displayed. The value
+of `output' will be the string that was received by comint.
+
+See also: `comint-output-filter-functions' [variable]"
+  (when iruby-pending-input
+    ;; ensure any pending input is carried over
+    (insert iruby-pending-input)
+    (setq iruby-pending-input nil)))
 
 
 (defun iruby-send-region (start end &optional file-name line process)
@@ -1887,11 +1909,14 @@ successful load of the file, within the ruby process"
                                      ;; (princ (iruby-get-last-output ,proc))
                                      )
                                   'function)
+                       ;; thread name, e.g for the `list-threads' cmd
                        (format "iruby output monitor %s"
                                (mapconcat #'number-to-string (current-time) "-")))))
             ))))))
 
-;; NB
+;; NB the Emacs debugger may not be activated under an error outside
+;; of the Emacs main thread. Any "last error" from a (??) thread
+;; may be read and cleared with:
 ;; (thread-last-error t)
 
 
@@ -1905,11 +1930,86 @@ successful load of the file, within the ruby process"
       (iruby-send-region (point) end))))
 
 
-(defun iruby-send-last-sexp ()
-  "Send the previous sexp to the inferior Ruby process."
-  (interactive "P")
-  (iruby-send-region (save-excursion (ruby-backward-sexp) (point))
-                     (point)))
+(make-variable-buffer-local
+ (defvar iruby-pending-input nil
+   "If non-nil, an expresion to append after the next input prompt
+
+This variable's value may be set during `iruby-send-last-sexp' and
+will be handled in `iruby-output-filter'"))
+
+
+(defun iruby-strip-pending-input (&optional buffer)
+  "Remove and store any pending input in an iRuby buffer
+
+When called interactively, the prevailing iRuby buffer will be used
+unless with an interactive prefix argument, in which case the user will
+be queried for a process buffer.
+
+This function will store the pending input in `iruby-pending-input' such
+that the latest value of this variable will be presented after the next
+prompt is displayed in the iRuby buffer.
+
+Returns the value of point at the end of the last prompt in the buffer,
+subsequent of the trimmed input.
+
+See also: `iruby-send-last-sexp'"
+  (interactive (list (if interactive-prefix-arg
+                         (iruby-read-process "Strip pending input for")
+                       (iruby-get-prevailing-buffer))))
+  (let ((use-buffer (or buffer (iruby-get-prevailing-buffer))))
+    (with-current-buffer use-buffer
+      (when buffer
+        (unless (eq major-mode 'iruby-mode)
+          (error "Not an iruby-mode buffer: %s" buffer)))
+      (save-mark-and-excursion
+        (save-restriction
+          (let* ((buffer-end (point-max))
+                 (prompt-end (iruby-jump-to-last-prompt buffer-end)))
+            (unless (= prompt-end buffer-end)
+              (setq iruby-pending-input
+                    (buffer-substring prompt-end buffer-end))
+              (delete-region prompt-end buffer-end))
+            (point)))))))
+
+
+(defun iruby-send-last-sexp (point)
+  "Send the previous sexp at `point' to the inferior Ruby process.
+The expression will be sent as new input in the process' comint buffer.
+
+If point is within an expression, this will send the expression up to
+its last point, as determined by `(bounds-of-thing-at-point 'sexp)'
+
+If an expression was being input in the comint buffer before this
+function, the expression will be in effect moved to the new prompt
+displayed after the evaluation has returned."
+  (interactive "d")
+  (save-mark-and-excursion
+      (let ((min (point-min))
+            (cur point)
+            bounds)
+        (goto-char point)
+        (cl-loop
+           ;; ensure that there are bounds for an expression at point,
+           ;; walking backwards by each character in the buffer,
+           (cond
+             ((setq bounds (iruby-bounds-of-thing 'sexp))
+              ;; found an expr
+              (cl-return))
+             ((= cur min) ;; beginning of buffer
+              (setq bounds (cons min point))
+              (cl-return))
+             (t
+              (backward-char)
+              (setq cur (point)))))
+        ;; send the substring for the expression,
+        ;; ensuring that any pending input is stored
+        (destructuring-bind (start . end) bounds
+          (let ((str (buffer-substring-no-properties start end))
+                (buff (iruby-get-prevailing-buffer)))
+            (with-current-buffer buff
+              (goto-char (iruby-strip-pending-input buff))
+              (insert str)
+              (comint-send-input)))))))
 
 
 (defun iruby-send-block (point)
@@ -1924,7 +2024,7 @@ successful load of the file, within the ruby process"
       (iruby-send-region (point) end))))
 
 
-(defvar iruby-last-ruby-buffer nil
+(defvar iruby-default-ruby-buffer nil
   "The last buffer we switched to `iruby' from.
 
 This variable may be used as a default when `iruby-process' is nil in
@@ -1932,31 +2032,35 @@ the current buffer")
 
 
 (defun iruby-remember-ruby-buffer (buffer)
-  (setq iruby-last-ruby-buffer buffer))
+  (setq iruby-default-ruby-buffer buffer))
 
 
 (defun iruby-switch-to-inf (eob-p)
   "Switch to the ruby process buffer.
-With argument, positions cursor at end of buffer."
+With argument, positions cursor at end of buffer.
+
+This function updates the value of `iruby-default-ruby-buffer'
+
+See also: `iruby-use-process'"
   (interactive "P")
-  (let ((buffer (current-buffer))
-        (iruby-buffer* (or (iruby-buffer) iruby-buffer)))
-    (if iruby-buffer*
+  (let ((buffer (iruby-get-prevailing-buffer)))
+    (if buffer
         (progn
-          (pop-to-buffer iruby-buffer*)
+          (pop-to-buffer buffer)
           (iruby-remember-ruby-buffer buffer))
-      (error "No current process buffer, see variable iruby-buffers")))
-  (cond (eob-p
-         (push-mark)
-         (goto-char (point-max)))))
+      (error "Found no iRuby process")))
+  (when eob-p
+    (push-mark)
+    (goto-char (point-max))
+    (iruby-jump-to-last-prompt)))
 
 
 (defun iruby-switch-to-last-ruby-buffer ()
   "Switch back to the last Ruby buffer."
   (interactive)
-  (if (and iruby-last-ruby-buffer
-           (buffer-live-p iruby-last-ruby-buffer))
-      (pop-to-buffer iruby-last-ruby-buffer)
+  (if (and iruby-default-ruby-buffer
+           (buffer-live-p iruby-default-ruby-buffer))
+      (pop-to-buffer iruby-default-ruby-buffer)
     (message "Last Ruby buffer is unavailable")))
 
 
@@ -2063,74 +2167,77 @@ Then switch to the process buffer."
 
 (defun iruby-completions (prefix)
   "Return a list of completions for the Ruby expression starting with EXPR."
+  ;; NB for `iruby-completion-at-point' under buffer's
+  ;; `completion-at-point-functions'
   (let* ((proc (iruby-proc))
-         (line (buffer-substring (save-excursion (move-beginning-of-line 1)
-                                                 (point))
-                                 (point)))
+         (line (buffer-substring
+                (save-excursion (move-beginning-of-line 1)
+                                (point))
+                (point)))
          (expr (iruby-completion-expr-at-point))
          (prefix-offset (- (length expr) (length prefix)))
-         (comint-filt (process-filter proc))
-         (kept "") completions
-         ;; Guard against running completions in parallel:
-         )
+         (previous-filter (process-filter proc))
+         (kept "")
+         completions)
     ;;;; (warn "Completions. prefix %S expr %S" prefix expr)
-    (unless (equal "(rdb:1) " iruby-last-prompt)
-      (set-process-filter proc
-                          (lambda (proc string)
-                            (setq kept (concat kept string))
-                            ;; ensure that the string is not displayed:
-                            nil))
-      (unwind-protect
-          (let ((completion-snippet
-                 (format
-                  (concat
-                   iruby-impl-completion-expr
-                   "; nil;\n"
 
-                   ;; NB supporting IRB only , for now
-                   ;;
-                   ;; FIXME This API needs a better way to store
-                   ;; implementation-specific properties as constant
-                   ;; expressions, under custom - cmd, args,
-                   ;; eval contxt, this bit, ...
+    (unwind-protect
+         (progn
+           (set-process-filter proc
+                               (lambda (proc string)
+                                 (setq kept (concat kept string))
+                                 ;; ensure that the string is not displayed:
+                                 nil))
+           (let ((completion-snippet
+                  (format
+                   (concat
+                    iruby-impl-completion-expr
+                    "; nil;\n"
 
-                   ;; "proc { |expr, line|"
-                   ;; "  require 'ostruct';"
-                   ;; "  old_wp = defined?(Bond) && Bond.started? && Bond.agent.weapon;"
-                   ;; "  begin"
-                   ;; "    Bond.agent.instance_variable_set('@weapon',"
-                   ;; "      OpenStruct.new(:line_buffer => line)) if old_wp;"
-                   ;; "    if defined?(_pry_.complete) then"
-                   ;; "      puts _pry_.complete(expr)"
-                   ;; "    elsif defined?(pry_instance.complete) then"
-                   ;; "      puts pry_instance.complete(expr)"
-                   ;; "    else"
-                   ;; "      completer = if defined?(_pry_) then"
-                   ;; "        Pry.config.completer.build_completion_proc(binding, _pry_)"
-                   ;; "      elsif old_wp then"
-                   ;; "        Bond.agent"
-                   ;; "      elsif defined?(IRB::InputCompletor::CompletionProc) then"
-                   ;; "        IRB::InputCompletor::CompletionProc"
-                   ;; "      end and puts completer.call(expr).compact"
-                   ;; "    end"
-                   ;; "  ensure"
-                   ;; "    Bond.agent.instance_variable_set('@weapon', old_wp) if old_wp "
-                   ;; "  end "
-                   ;; "}.call('%s', '%s')\n"
+                    ;; FIXME  The following needs tests under impl-specific
+                    ;; :completion exprs
+                    ;;
+                    ;; supporting only IRB/Ruby, for now
 
-                   )
-                  (iruby-escape-single-quoted expr)
-                  (iruby-escape-single-quoted line))))
+                    ;; "proc { |expr, line|"
+                    ;; "  require 'ostruct';"
+                    ;; "  old_wp = defined?(Bond) && Bond.started? && Bond.agent.weapon;"
+                    ;; "  begin"
+                    ;; "    Bond.agent.instance_variable_set('@weapon',"
+                    ;; "      OpenStruct.new(:line_buffer => line)) if old_wp;"
+                    ;; "    if defined?(_pry_.complete) then"
+                    ;; "      puts _pry_.complete(expr)"
+                    ;; "    elsif defined?(pry_instance.complete) then"
+                    ;; "      puts pry_instance.complete(expr)"
+                    ;; "    else"
+                    ;; "      completer = if defined?(_pry_) then"
+                    ;; "        Pry.config.completer.build_completion_proc(binding, _pry_)"
+                    ;; "      elsif old_wp then"
+                    ;; "        Bond.agent"
+                    ;; "      elsif defined?(IRB::InputCompletor::CompletionProc) then"
+                    ;; "        IRB::InputCompletor::CompletionProc"
+                    ;; "      end and puts completer.call(expr).compact"
+                    ;; "    end"
+                    ;; "  ensure"
+                    ;; "    Bond.agent.instance_variable_set('@weapon', old_wp) if old_wp "
+                    ;; "  end "
+                    ;; "}.call('%s', '%s')\n"
+
+                    )
+                   (iruby-escape-single-quoted expr)
+                   (iruby-escape-single-quoted line))))
             ;;; (warn "in completions section. using %s" completion-snippet)
-            (process-send-string proc completion-snippet)
-            (while (and (not (string-match iruby-prompt-pattern kept))
-                        ;; how now :: ?
-                        (accept-process-output proc 2)))
-            (setq completions (butlast (split-string kept "\r?\n") 2))
-            ;; Subprocess echoes output on Windows and OS X.
-            (when (and completions (string= (concat (car completions) "\n") completion-snippet))
-              (setq completions (cdr completions))))
-        (set-process-filter proc comint-filt)))
+             (process-send-string proc completion-snippet)
+             (while (and (not (string-match iruby-prompt-pattern kept))
+                         ;; how now :: ?
+                         (accept-process-output proc 2)))
+             (setq completions (butlast (split-string kept "\r?\n") 2))
+             ;; Subprocess echoes output on Windows and OS X.
+             (when (and completions (string= (concat (car completions) "\n") completion-snippet))
+               (setq completions (cdr completions)))))
+      ;; ensure:
+      (set-process-filter proc previous-filter))
+
     ;;; (warn "At end, kept: %S" kept)
     ;;; (warn "At end, completions: %S" completions)
     (mapcar
@@ -2154,11 +2261,7 @@ Then switch to the process buffer."
     (save-excursion
       (when (eq s ?.)
         (backward-char))
-      (let ((bounds (bounds-of-thing-at-point 'sexp)))
-        (when (consp (cdr bounds))
-          ;; NB fix up some inconsistent syntax
-          ;; from thingatpt
-          (setf (cdr bonds) (cadr bounds)))
+      (let ((bounds (iruby-bounds-of-thing 'sexp)))
         ;; (warn "Bounds %S" bounds)
         (when (and (eq s ?.) bounds)
           ;; when completing at punctuation
@@ -2630,7 +2733,7 @@ Using current defaults for %s" name iruby-default-implementation )
         (dir (or (cdr (assq 'default-directory desktop-buffer-locals))
                  (cdr (assq :dir data))
                  default-directory))
-        (last-p (cdr (assq :last-p data)))
+        (default-p (cdr (assq :default-p data)))
         (mapped (or (cdr (assq :mapped data))
                     (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
 
@@ -2659,11 +2762,11 @@ Using current defaults for %s" name iruby-default-implementation )
             ;; `iruby-map-desktop-process-buffers'
             ;; from `desktop-after-read-hook'
             (setq iruby-mapped-source-buffers mapped)))
-        (when last-p
+        (when default-p
           ;; FIXME this needs to be set local to the buffer,
           ;; then catch from `iruby-map-desktop-process-buffers'
           ;; to prevent it being overridden for some later ruby buffer
-          (push '(:last-p . t)  iruby-mapped-misc-data))
+          (push '(:default-p . t)  iruby-mapped-misc-data))
         (iruby-send-string proc
                            (format "puts(%%q(# iRuby chdir to %s))" dir))
         (iruby-send-string proc
@@ -2686,46 +2789,34 @@ the following values in the current iruby-mode buffer:
 - :dir => `default-directory' for the buffer, in Emacs
 - :mapped => list of buffer names, for buffers where `iruby-buffer' has
    been set as eq to the current buffer
+- :default-p => present if true, indicating that the buffer was in use
+   as the `iruby-default-ruby-buffer'
 
 See also:
  `iruby-map-desktop-process-buffers',
  `iruby-ensure-desktop-support'"
   (let* ((self (current-buffer))
          (mapped (list nil))
-         (lastp (eq self iruby-last-ruby-buffer)))
+         (default-p (eq self iruby-default-ruby-buffer))
+         (last-mapped mapped)
+         new-last)
+
     (dolist (srcbuff (buffer-list))
       (unless (eq srcbuff self)
         (with-current-buffer srcbuff
           (when (eq iruby-buffer self)
-            (setf (cdr (last mapped))
-                  ;; FIXME it may not be sufficient to store only the
-                  ;; buffer name, as desktop-read will not exactly
-                  ;; restore the buffer name in use at time of
-                  ;; desktop-save
-                  ;;
-                  ;; e.g  both of "file.rb<lib>" and "file.rb<test>"
-                  ;; will be stored with a buffer name "file.rb" in the
-                  ;; desktop session data. It may not necessarily be
-                  ;; assumed that the buffer names will be restored
-                  ;; equivalently under every later Emacs session,
-                  ;;
-                  ;; As in this example, when a new "file.rb" has been
-                  ;; opened, all of the buffer names on a "file.rb" file
-                  ;; might be modified, such that if desktop-read is
-                  ;; called after the new "file.rb" is opened, the
-                  ;; buffer names may not match anything that was
-                  ;; stored.
-                  ;;
-                  ;; TBD whether and how desktop-save may provide any
-                  ;; any access to the internal buffer list used to
-                  ;; write the desktop file
-                  (cons (buffer-name srcbuff) nil))))))
+            ;; adds new values to the last cons cell in 'mapped'
+            ;; without iterating on the list, under every iteration here
+            (setf new-last (cons (buffer-name srcbuff) nil)
+                  (cdr last-mapped) new-last
+                  last-mapped new-last)))))
+
     (append (list (cons :cmd iruby-buffer-command)
                   (cons :dir default-directory)
                   (cons :mapped (cdr mapped)))
             ;; optional data
-            (when lastp
-              (list (cons :last-p t))))))
+            (when default-p
+              (list (cons :default-p t))))))
 
 (defun iruby-map-desktop-process-buffers ()
   "Ensure that each  buffer stored under `desktop-save' will be re-bound
@@ -2752,8 +2843,8 @@ needed for iRuby desktop session support."
       (dolist (current iruby-process-buffers (cdr mapped))
         (cl-destructuring-bind (proc . procbuff) current
           (with-current-buffer procbuff
-            (when (cdr (assq :last-p iruby-mapped-misc-data))
-              (setq iruby-last-ruby-buffer procbuff))
+            (when (cdr (assq :default-p iruby-mapped-misc-data))
+              (setq iruby-default-ruby-buffer procbuff))
             ;; iterate on the local value of `iruby-mapped-source-buffers'
             (dolist (mapped-name iruby-mapped-source-buffers)
               (let ((srcbuff (find-buffer-for mapped-name)))
