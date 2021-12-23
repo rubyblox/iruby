@@ -11,7 +11,7 @@
 ;; URL: http://github.com/nonsequitur/inf-ruby
 ;; Created: 8 April 1998
 ;; Keywords: languages ruby
-;; Version: 2.6.2
+;; Version: 3.0.1
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -1278,22 +1278,29 @@ See also: `iruby-switch-to-process'"
   (switch-to-buffer-other-frame (iruby-process-buffer process)))
 
 (defun iruby-use-process (process buffer)
+  ;; NB if buffer is 't' that indicates to set the process/buffer
+  ;; mapping globally, based on the process object provided.
   (interactive (list (iruby-read-process "Use process: ")
                      (if current-prefix-arg
-                         (read-buffer "Switch process for buffer: ")
+                         (or (yes-or-no-p "Set globally? ")
+                             (read-buffer "Switch process for buffer: "))
                        (current-buffer))))
   (let* ((buffproc (iruby-buffer-process buffer))
          (procbuff (when buffproc
                      (iruby-process-buffer buffproc))))
     (cond
+      ((eq buffer t)
+       (unless (process-live-p process)
+         (warn "Using extant process %s globally" process ))
+       (setq iruby-last-ruby-buffer
+             (iruby-process-buffer process)))
       ((eq buffer procbuff)
        (error "Cannot change the iRuby process for process buffer %s" buffer))
       ((and buffproc (eq process buffproc))) ;; no-op
       (t (with-current-buffer buffer
            (unless (process-live-p process)
              (warn "Using extant process %s in buffer %s" process buffer))
-           (setq iruby-buffer (iruby-process-buffer process)
-                 ))))))
+           (setq iruby-buffer (iruby-process-buffer process)))))))
 
 (defun iruby-process-status (whence)
   "If a process is associated with `whence', then return the process
@@ -1861,8 +1868,10 @@ successful load of the file, within the ruby process"
 
 
 (defvar iruby-last-ruby-buffer nil
-  "The last buffer we switched to `iruby' from.")
-(make-variable-buffer-local 'iruby-last-ruby-buffer)
+  "The last buffer we switched to `iruby' from.
+
+This variable may be used as a default when `iruby-process' is nil in
+the current buffer")
 
 
 (defun iruby-remember-ruby-buffer (buffer)
@@ -2526,6 +2535,10 @@ mapping should be restored after a later `desktop-restore'.
 
 See also: `iruby-mapped-buffer-name', `iruby-ensure-desktop-support'"))
 
+(make-variable-buffer-local
+ (defvar iruby-mapped-misc-data nil
+   "Associative list for data to `iruby-map-desktop-process-buffers'"))
+
 
 (defun iruby-restore-desktop-buffer (file name data)
   "Callback function for iRuby support in `desktop-read'
@@ -2543,6 +2556,7 @@ Using current defaults for %s" name iruby-default-implementation )
         (dir (or (cdr (assq 'default-directory desktop-buffer-locals))
                  (cdr (assq :dir data))
                  default-directory))
+        (last-p (cdr (assq :last-p data)))
         (mapped (or (cdr (assq :mapped data))
                     (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
 
@@ -2567,10 +2581,17 @@ Using current defaults for %s" name iruby-default-implementation )
              (exp-dir (expand-file-name dir)))
         (when mapped
           (with-current-buffer procbuff
-            ;; set up for the hook onto `iruby-map-desktop-process-buffers'
+            ;; store buffer mapping data for the callback to
+            ;; `iruby-map-desktop-process-buffers'
+            ;; from `desktop-after-read-hook'
             (setq iruby-mapped-source-buffers mapped)))
+        (when last-p
+          ;; FIXME this needs to be set local to the buffer,
+          ;; then catch from `iruby-map-desktop-process-buffers'
+          ;; to prevent it being overridden for some later ruby buffer
+          (push '(:last-p . t)  iruby-mapped-misc-data))
         (iruby-send-string proc
-                           (format "puts(%%q(# iruby chdir to %s))" dir))
+                           (format "puts(%%q(# iRuby chdir to %s))" dir))
         (iruby-send-string proc
                            (format "Dir.chdir(%%q(%s))" exp-dir))))))
 
@@ -2595,8 +2616,9 @@ the following values in the current iruby-mode buffer:
 See also:
  `iruby-map-desktop-process-buffers',
  `iruby-ensure-desktop-support'"
-  (let ((self (current-buffer))
-        (mapped (list nil)))
+  (let* ((self (current-buffer))
+         (mapped (list nil))
+         (lastp (eq self iruby-last-ruby-buffer)))
     (dolist (srcbuff (buffer-list))
       (unless (eq srcbuff self)
         (with-current-buffer srcbuff
@@ -2624,9 +2646,12 @@ See also:
                   ;; any access to the internal buffer list used to
                   ;; write the desktop file
                   (cons (buffer-name srcbuff) nil))))))
-    (list (cons :cmd iruby-buffer-command)
-          (cons :dir default-directory)
-          (cons :mapped (cdr mapped)))))
+    (append (list (cons :cmd iruby-buffer-command)
+                  (cons :dir default-directory)
+                  (cons :mapped (cdr mapped)))
+            ;; optional data
+            (when lastp
+              (list (cons :last-p t))))))
 
 (defun iruby-map-desktop-process-buffers ()
   "Ensure that each  buffer stored under `desktop-save' will be re-bound
@@ -2653,6 +2678,8 @@ needed for iRuby desktop session support."
       (dolist (current iruby-process-buffers (cdr mapped))
         (cl-destructuring-bind (proc . procbuff) current
           (with-current-buffer procbuff
+            (when (cdr (assq :last-p iruby-mapped-misc-data))
+              (setq iruby-last-ruby-buffer procbuff))
             ;; iterate on the local value of `iruby-mapped-source-buffers'
             (dolist (mapped-name iruby-mapped-source-buffers)
               (let ((srcbuff (find-buffer-for mapped-name)))
