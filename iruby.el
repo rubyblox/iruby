@@ -11,7 +11,7 @@
 ;; URL: http://github.com/nonsequitur/inf-ruby
 ;; Created: 8 April 1998
 ;; Keywords: languages ruby
-;; Version: 3.0.1
+;; Version: 3.0.2
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -129,6 +129,27 @@
 (defgroup iruby nil
   "Run Ruby process in a buffer"
   :group 'languages)
+
+
+
+(defcustom iruby-load-file-history-limit history-length
+  "File name history liimit for `iruby-load-file'.
+
+If zero, no file name history will be stored
+
+The default value is derived from `history-length'"
+  :type '(integer
+          :validate
+          (lambda (widget)
+            (let ((it (widget-value widget)))
+              (unless (and (integerp it)
+                           (or (zerop it)
+                               (plusp it)))
+                (widget-put widget
+                            :error
+                            (format "Not a recognized history limit: %S" it))))))
+  ;; TBD :group 'iruby-files
+  :group 'iruby)
 
 (defgroup iruby-ui nil
   "iRuby user interface support"
@@ -373,14 +394,31 @@ shell command."
   ;; as the name of the ruby or irb implementation to launch
   ;; under comint.
   ;;
-  ;; If the implementation name in NAME does not have a prefix either
-  ;; "irb" or "ruby", this will return the cons of NAME and REST-ARGS
+  ;; If the implementation name in NAME does begin with either of the
+  ;; strings  "irb" or "ruby", this will return the cons of NAME and
+  ;; REST-ARGS
   ;;
   ;; This function will accept e.g "irb27" or "ruby-dev" as an
   ;; implementation name, then returning a list of command line argument
-  ;; values in a manner similar to the "irb" or "ruby" case,
-  ;; respectively.
+  ;; values in a manner similar to either the "irb" or "ruby" case.
   ;;
+  ;; FIXME this custom configuration does not allow for providing an
+  ;; implementation name with version suffix, independent of one of:
+  ;;
+  ;; A) a complete implementation description for the versioned impl,
+  ;;   under `iruby-implementations' - or
+  ;;
+  ;; B) a complete command string or list (absent of binding delcs,
+  ;;    etc) as the `iruby-default-implementation' and independent
+  ;;    to the following function - or
+  ;;
+  ;; C) a versioned implementaiton named beginning with "irb" or "ruby",
+  ;;    such that this implementation name would be provided
+  ;;    independent of 'customize-option' as the value of
+  ;;    `iruby-default-implementation'.
+  ;;
+  ;;    In effect, this defines an implementation class for each of the
+  ;;    "ruby and "irb" implementations
   (let ((cmd-name name))
     (cond
       ((string-match "^irb" cmd-name)
@@ -519,17 +557,17 @@ graphical char in all other prompts.")
   "Mode map for `iruby-mode'.")
 
 ;;;###autoload
-(defvar iruby-source-modes '(ruby-mode enh-ruby-mode iruby-minor-mode)
+(defvar iruby-source-modes '(ruby-mode enh-ruby-mode)
   "Used to determine if a buffer contains Ruby source code.
 If it's loaded into a buffer that is in one of these major modes, it's
 considered a ruby source file by `iruby-load-file'.
 Used by these commands to determine defaults.")
 
-(defvar iruby-prev-l/c-dir/file nil
-  "Caches the last (directory . file) pair.
-Caches the last pair used in the last `iruby-load-file' command.
-Used for determining the default in the
-next one.")
+(defvar iruby-load-file-history nil
+  "History data for interactive comint forms with `iruby-load-file'
+
+The length of this history data under `iruby-load-file' is configured
+with `iruby-load-file-history-limit'")
 
 (defvar iruby-last-prompt nil)
 (make-variable-buffer-local 'iruby-last-prompt)
@@ -1278,8 +1316,29 @@ See also: `iruby-switch-to-process'"
   (switch-to-buffer-other-frame (iruby-process-buffer process)))
 
 (defun iruby-use-process (process buffer)
-  ;; NB if buffer is 't' that indicates to set the process/buffer
-  ;; mapping globally, based on the process object provided.
+  "Select an iRuby process to use for the specified source buffer.
+
+The `process' should be an Emacs process object, such that may be
+determined with `iruby-read-process'.
+
+If `buffer' is the symbol `t', this will set the global iRuby process
+under `iruby-last-ruby-buffer'.
+
+Otherwise, `buffer' should denote an active source buffer, typically a
+buffer in some Ruby source file mode. In this case, the `process' will
+be selected for storing the iRuby buffer of that process in the value of
+`iruby-buffer' in the provided `buffer'.
+
+This function may be called interactively. If called with an interactive
+prefix argument, the user will be queried as to whether to set the value
+globally, or for which buffer to bind to the specified process. If
+called without an interactive prefix argument, this will select an iRuby
+process for the current buffer.
+
+Assuming that the function `iruby-ensure-desktop-support' has been
+called, the global and buffer-local process bindings configured with
+this function will be stored by `desktop-save' and restored by
+`desktop-load'."
   (interactive (list (iruby-read-process "Use process: ")
                      (if current-prefix-arg
                          (or (yes-or-no-p "Set globally? ")
@@ -1331,11 +1390,9 @@ See also: `iruby-process-status'"
 (defvar iruby-process-buffers nil
   "Internal storage for buffer/process mapping in iRuby
 
-See also:
-functions `iruby-buffer-process' and `iruby-process-buffer'
-function `iruby-read-processs'
-command `iruby-restart-process'
-function `iruby-drop-process' and the variable `kill-buffer-hook'")
+See also: functions `iruby-buffer-process' and `iruby-process-buffer'
+
+For interactive forms, see also: `iruby-read-process'")
 
 
 (defun iruby-process-buffer (process)
@@ -1928,20 +1985,37 @@ Then switch to the process buffer."
 
 
 (defun iruby-load-file (file-name &optional process)
-  "Load a Ruby file into the inferior Ruby process."
+  "Load a Ruby file into the inferior Ruby process.
+
+The interactive form will store history data in the variable
+`iruby-load-file-history' when `iruby-load-file-hiistory-limit' is
+non-zero.
+
+The file will be loaded by the active Ruby process for the current
+buffer, or that for the global iRuby environment. This proceses may be
+selected previous to `iruby-load-file', with the command
+`iruby-use-process'
+
+When called interactively, a prefix numeric argument to this command
+specifies that the user should be queried for a Ruby process to use in
+loading the file."
   (interactive
-   (list (car
-          (comint-get-source "Load Ruby file: " iruby-prev-l/c-dir/file
-                             ;; T because LOAD needs an exact name
-                             iruby-source-modes t))
-         (if current-prefix-arg
-             (iruby-read-process "Load file in ruby")
-           (iruby-proc))))
+   (let* ((file-name-history (mapcar #'car iruby-load-file-history))
+          (comint-src
+           (comint-get-source "Load Ruby file: " (car iruby-load-file-history)
+                              ;; T because LOAD needs an exact name
+                              iruby-source-modes t)))
+     (unless (or (zerop iruby-load-file-history-limit)
+                 (equal comint-src (car iruby-load-file-history)))
+       (add-to-history 'iruby-load-file-history comint-src
+                       iruby-load-file-history-limit))
+     (list (car comint-src)
+           (if current-prefix-arg
+               (iruby-read-process "Load file in ruby")
+             (iruby-proc)))))
   (comint-check-source file-name) ; Check to see if buffer needs saved.
   (let ((file (expand-file-name file-name))
         (proc (or process (iruby-proc))))
-    (setq iruby-prev-l/c-dir/file (cons (file-name-directory    file)
-                                        (file-name-nondirectory file)))
     (with-temp-buffer
       (insert (format "STDERR.puts(%%q(## loading %s));" file))
       (insert (format "load(%%q(%s));" (iruby-escape-single-quoted file)))
