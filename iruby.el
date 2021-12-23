@@ -579,6 +579,27 @@ See also: `iruby-mode-map' and `iruby-minor-mode-map'"
         ))
     map))
 
+
+
+(defvar iruby-warnings-once nil
+  "Session-local storage for `iruby-warn-once'")
+
+(defun iruby-warn-once (message &rest format-args)
+  "Call `warn' with `message' and `format-args' unless a similar warning
+message has already been produced under `iruby-warn-once'
+
+This function is used in `iruby-completion-at-point', to ensure that the
+user is notified at most once when the local iRuby implementation does
+not have any completion support enabled in iRuby"
+  (let ((msg (apply #'format-message message format-args)))
+    (unless (member msg iruby-warnings-once)
+      ;; NB ensuring that the actual format-args are passed to the
+      ;; warning - using the locally produced msg only for purposes
+      ;; of caching
+      (push msg iruby-warnings-once)
+      (apply #'warn message format-args))))
+
+
 ;;;###autoload
 (define-minor-mode iruby-minor-mode
   "Minor mode for interacting with the inferior process buffer.
@@ -1017,14 +1038,11 @@ than exit, hangup, or finished for a ruby subprocess initialized with
   ;; with GNU Emacs 27.2 (build 1, x86_64-pc-linux-gnu, GTK+ Version 3.24.27, cairo version 1.17.4)
   ;; on Arch Linux
   (let ((status (process-status process)))
-    (unless (eq status 'run)
-      ;; NB iruby is not using networked processes
-      ;; only the 'run' state would denote a live process
-      (iruby-remove-process-buffer process))
-    (unless (memq status '(exit hangup finished))
+    (unless (or (memq status '(exit finished))
+                (stringp state) (string= state "hangup"))
       ;; NB the second arg delivered to the process sentinel
-      ;; will normally be an informative string, terminated by newline
-      (warn "iRuby process %s state changed (%s): %s"
+      ;; will normally be an informative string
+      (warn "iRuby process %s state changed (%S): %S"
             process status state))))
 
 
@@ -1163,15 +1181,20 @@ See also: `iruby-get-last-output', `iruby-print-result'"
 
 
 (defun iruby-buffer-short-name (whence)
-  (let ((name (etypecase whence
-                (string whence)
-                (buffer (iruby-buffer-short-name (buffer-name whence)))
-                (process (iruby-buffer-short-name (iruby-process-buffer whence))))))
-    (cond
-      ((string-match "^\\*\\(.*\\)\\*\\(<.*>\\)?$" name)
-       (concat (match-string-no-properties 1 name)
-               (match-string-no-properties 2 name)))
-      (t name))))
+  (cl-block self
+    (let ((name (etypecase whence
+                  (string whence)
+                  (buffer (cond
+                            ((buffer-live-p whence)
+                             (iruby-buffer-short-name (buffer-name whence)))
+                            (t (cl-return-from self nil))))
+                  (process (or (iruby-buffer-short-name (iruby-process-buffer whence))
+                               (cl-return-from self nil))))))
+      (cond
+        ((string-match "^\\*\\(.*\\)\\*\\(<.*>\\)?$" name)
+         (concat (match-string-no-properties 1 name)
+                 (match-string-no-properties 2 name)))
+        (t name)))))
 
 ;; (iruby-buffer-short-name (caar iruby-process-buffers))
 ;; e.g => "ruby"
@@ -1198,7 +1221,9 @@ See also: `iruby-get-last-output', `iruby-print-result'"
                                (let ((p (car elt)))
                                  (when (or (null require-live)
                                            (process-live-p p))
-                                   (list (cons (iruby-buffer-short-name p) p)))))
+                                   (let ((name (iruby-buffer-short-name p)))
+                                     (when name
+                                       (list (cons name p)))))))
                            iruby-process-buffers))
             (default (caar table))
             (selected
@@ -1336,10 +1361,12 @@ See also: `iruby-process-buffer', `iruby-restart-process',
                                     iruby-process-buffers)))
 
 (defun iruby-remove-process-buffer (whence)
-  (let ((proc (etypecase whence
+  (let* ((proc (etypecase whence
                 (process whence)
-                (buffer (iruby-buffer-process whence)))))
-    (setq iruby-process-buffers (delq proc iruby-process-buffers))))
+                (buffer (iruby-buffer-process whence))))
+         (elt (assq proc iruby-process-buffers)))
+    (when elt
+      (setq iruby-process-buffers (delq elt iruby-process-buffers)))))
 
 (defun iruby-drop-process ()
   ;; NB this function was defined originally for kill-buffer-hook,
@@ -1358,7 +1385,7 @@ See also: `iruby-process-buffer', `iruby-restart-process',
   ;;
   (when (eq major-mode 'iruby-mode)
     (let* ((whence (current-buffer))
-           (proc (get-buffer-process whence)))
+           (proc (iruby-buffer-process whence)))
       (when (and proc (iruby-process-running-p proc))
         ;;; FIXME this needs cleanup, in how iruby-close-process is implemented
         ;;; though it might be preferred, subsequently:
@@ -1367,7 +1394,10 @@ See also: `iruby-process-buffer', `iruby-restart-process',
         ;;; warnings as iruby-close-process may: `comint-send-eof',
         ;;; presently used as a first call in `iruby-close-process'
         (comint-send-eof))
-      (iruby-remove-process-buffer whence))))
+      (iruby-remove-process-buffer whence)
+      (when (eq whence iruby-last-ruby-buffer)
+        (setq iruby-last-ruby-buffer (caar iruby-process-buffers))
+      ))))
 
 (add-hook 'kill-buffer-hook 'iruby-drop-process)
 
@@ -1901,10 +1931,10 @@ Then switch to the process buffer."
   (comint-check-source file-name) ; Check to see if buffer needs saved.
   (let ((file (expand-file-name file-name))
         (proc (or process (iruby-proc))))
-    (setq iruby-prev-l/c-dir/file (cons (file-name-directory    file) ;; ?????
+    (setq iruby-prev-l/c-dir/file (cons (file-name-directory    file)
                                         (file-name-nondirectory file)))
     (with-temp-buffer
-      (insert (format "puts(%%q(## loading %s));" file))
+      (insert (format "STDERR.puts(%%q(## loading %s));" file))
       (insert (format "load(%%q(%s));" (iruby-escape-single-quoted file)))
       (iruby-send-region (point-min) (point-max) nil nil proc))))
 
