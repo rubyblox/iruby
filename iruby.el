@@ -265,14 +265,16 @@ shell command."
     (unless (string= impl "irb")
       (error "Unknown irb implementation: %s" output))
     (cond
-      ;; TBD --noreadline presumaby implies something different than
-      ;; --nomultiline. Furthermore, the former might not appear in the
-      ;; '--help' text for the supporting irb versions.
+      ;; IRB may modify the string that 'ruby --version' would show,
+      ;; such that "3.1.0preview1" may be presented under IRB as "3.1.0.pre.1".
       ;;
-      ;; This may assume that "--noreadline" would imply "--nomultiline"
+      ;; This will try to recover a version string from that syntax.
       ;;
-      ;; Maintained for purpose of portability
-      ((version<= "1.2.0" (nth 1 fields)) "--nomultiline")
+      ;; Maintained for purpose of portability onto historic Ruby versions
+      ;;
+      ;; See also, the '--inf-ruby' option in recent relases of IRB
+      ((version<= "1.2.0" (string-replace ".pre." "pre" (cadr fields)))
+       "--nomultiline")
       (t "--noreadline"))))
 
 
