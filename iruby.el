@@ -533,21 +533,20 @@ shell command."
   (let* ((output (shell-command-to-string
                   (mapconcat 'identity (append cmdlist (list "--version"))
                              " ")))
-         (fields (split-string output "[ (]"))
-         (impl (car fields)))
+         (fields (split-string (string-trim-right output) "\s+"))
+         (impl (car fields))
+         (version (cadr fields)))
     (unless (string= impl "irb")
       (error "Unknown irb implementation: %s" output))
+    ;; parsing only the major.minor.patchlevel versions here, for
+    ;; compatibility with Emacs `version-to-list'. This may leave
+    ;; out any ".pre...." suffix in the irb version string, such that
+    ;; `version-to-list' may be unable to parse
+    (setq version (mapconcat 'identity
+                             (subseq 0 3 (split-string version "\\." t))
+                             "."))
     (cond
-      ;; IRB may modify the string that 'ruby --version' would show,
-      ;; such that "3.1.0preview1" may be presented under IRB as "3.1.0.pre.1".
-      ;;
-      ;; This will try to recover a version string from that syntax.
-      ;;
-      ;; Maintained for purpose of portability onto historic Ruby versions
-      ;;
-      ;; See also, the '--inf-ruby' option in recent relases of IRB
-      ((version<= "1.2.0" (string-replace ".pre." "pre" (cadr fields)))
-       "--nomultiline")
+      ((ignore-errors (version<= "1.2.0" version)) "--nomultiline")
       (t "--noreadline"))))
 
 
