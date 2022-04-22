@@ -543,7 +543,7 @@ shell command."
     ;; out any ".pre...." suffix in the irb version string, such that
     ;; `version-to-list' may be unable to parse
     (setq version (mapconcat 'identity
-                             (subseq 0 3 (split-string version "\\." t))
+                             (subseq (split-string version "\\." t) 0 3)
                              "."))
     (cond
       ((ignore-errors (version<= "1.2.0" version)) "--nomultiline")
