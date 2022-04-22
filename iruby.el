@@ -779,6 +779,27 @@ not have any completion support enabled in iRuby"
       (push msg iruby-warnings-once)
       (apply #'warn message format-args))))
 
+
+
+(defvar iruby-warnings-once nil
+  "Session-local storage for `iruby-warn-once'")
+
+(defun iruby-warn-once (message &rest format-args)
+  "Call `warn' with `message' and `format-args' unless a similar warning
+message has already been produced under `iruby-warn-once'
+
+This function is used in `iruby-completion-at-point', to ensure that the
+user is notified at most once when the local iRuby implementation does
+not have any completion support enabled in iRuby"
+  (let ((msg (apply #'format-message message format-args)))
+    (unless (member msg iruby-warnings-once)
+      ;; NB ensuring that the actual format-args are passed to the
+      ;; warning - using the locally produced msg only for purposes
+      ;; of caching
+      (push msg iruby-warnings-once)
+      (apply #'warn message format-args))))
+
+
 ;;;###autoload
 (define-minor-mode iruby-minor-mode
   "Minor mode for interacting with the inferior process buffer.
