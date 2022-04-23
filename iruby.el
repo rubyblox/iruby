@@ -1417,8 +1417,13 @@ match irrespective of whether the buffer's iRuby process is running"
                                                      #'iruby-console-match)))
             (when project-dir
               (check-buffer (iruby-buffer-in-directory project-dir)))))
-        (check-buffer iruby-default-ruby-buffer))))
-
+        (check-buffer iruby-default-ruby-buffer)
+        (cl-block last
+          (dolist (elt iruby-process-buffers)
+            (let ((b (cdr elt)))
+              (when (check-buffer b)
+                (cl-return-from last b)))))
+        )))
 
 ;;;###autoload
 (defun run-iruby (&optional command name always)
@@ -1724,12 +1729,21 @@ be queried to select a process to switch to.
 See also:
 `iruby-switch-to-process-other-window'
 `iruby-switch-to-process-other-frame'"
-  (interactive (iruby-read-process-interactive  "Switch to iRuby Process:"))
-  (let ((buff (etypecase process
-                (process (iruby-process-buffer process))
-                (buffer process)))
-        (frame (selected-frame))
-        window)
+  (interactive
+   (iruby-read-process-interactive  "Switch to iRuby Process:"))
+  (cl-block top
+    (let ((buff (etypecase process
+                  (process (iruby-process-buffer process))
+                  (buffer process)
+                  (null
+                   (let ((it (iruby-get-prevailing-buffer)))
+                     (cond
+                       (it it)
+                       (t
+                        (warn "iruby-switch-to-process: nil is not a process")
+                        (cl-return-from top)))))))
+          (frame (selected-frame))
+          window)
     (cl-block window-found
       (walk-windows (lambda (wn)
                       (when (eq (window-buffer wn) buff)
@@ -1738,7 +1752,7 @@ See also:
                     nil frame))
     (cond
       (window (select-window window))
-      (t (switch-to-buffer buff)))))
+      (t (pop-to-buffer buff))))))
 
 (defun iruby-switch-to-process-other-window (process)
   "If the iRuby process buffer denoted by `process' is displayed in
