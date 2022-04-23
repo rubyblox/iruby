@@ -964,24 +964,28 @@ See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
 (make-variable-buffer-local
  (defvar iruby-buffer-command nil "The command used to run Ruby shell"))
 
-(defvar iruby-buffer-impl-name nil "The name of the Ruby shell")
+(defvar iruby-buffer-impl-name nil
+  "Implementation name for a Ruby process buffer")
 (make-variable-buffer-local 'iruby-buffer-impl-name)
 
-(defun iruby-initialize-buffer-for (impl)
+(defun iruby-initialize-impl-bindings (&optional impl)
   ;; shared forms for `iruby-mode' (e.g under `run-iruby-new')
   ;; and `iruby-restart-process'
-  (let ((proc (get-buffer-process (current-buffer))))
+  ;;
+  ;; This is implemented here rather than in iruby-mode, as iruby-mode
+  ;; does not presently receive an implementation name
+  (let ((proc (get-buffer-process (current-buffer)))
+        (use-impl (or impl iruby-buffer-impl-name)))
     (cond
       (proc
        (setq iruby-buffer-command (process-command proc))
        (cond
-         (impl
+         (use-impl
           (setq
            iruby-impl-binding-expr (ignore-errors
-                                     (iruby-get-impl-binding-expr impl))
+                                     (iruby-get-impl-binding-expr use-impl))
            iruby-impl-completion-expr (ignore-errors
-                                        (iruby-get-impl-completion-expr impl))))
-         ;; catch any nil impl before error
+                                        (iruby-get-impl-completion-expr use-impl))))
          (t (warn "Unknown Ruby implementation for %s (nil)" (current-buffer)))))
       (t (warn "Unable to initialize buffer %s for iRuby (no process)"
                (current-buffer))))))
@@ -1888,12 +1892,17 @@ See also: `iruby-process-buffer', `iruby-restart-process',
   ;;
   (when (eq major-mode 'iruby-mode)
     (let* ((whence (current-buffer))
-           (proc (iruby-buffer-process whence)))
-      (iruby-close-process proc)
-      (iruby-remove-process-buffer whence)
-      (when (eq whence iruby-default-ruby-buffer)
-        (setq iruby-default-ruby-buffer (caar iruby-process-buffers))
-      ))))
+           (proc (iruby-buffer-process whence))
+           (procbuff (when proc (iruby-process-buffer proc))))
+      (when (and proc (eq procbuff whence))
+        (iruby-close-process proc)
+        (iruby-remove-process-buffer whence)
+        (when (eq whence iruby-default-ruby-buffer)
+          (iruby-remember-ruby-buffer
+           (caar (cl-remove-if-not 'buffer-live-p
+                                   iruby-process-buffers
+                                   :key 'car))))
+        ))))
 
 (defun iruby-close-process (process)
   "Attempt to close the Ruby process provided as `process'
@@ -2005,11 +2014,14 @@ will be seleted by `iruby-read-process-interactive'"
     (with-current-buffer buff
       (let ((cmd (process-command process))
             (impl iruby-buffer-impl-name)
-            (locals (buffer-local-variables buff))
+            (multibyte-p enable-multibyte-characters)
+            (locals (cl-remove 'enable-multibyte-characters
+                               (buffer-local-variables buff)
+                               :key 'car :test 'eq))
             newbuff proc)
         (iruby-close-process process)
         ;; This calls `comint-exec' directly, without reinitilizing the
-        ;; buffer as under `run-iruby-new'
+        ;; buffer as within `run-iruby-new'
         (with-iruby-process-environment ()
           (setq newbuff
                 (comint-exec buff (process-name process)
@@ -2019,11 +2031,14 @@ will be seleted by `iruby-read-process-interactive'"
         (let ((iruby-default-ruby-syntax (or iruby-ruby-syntax
                                              iruby-default-ruby-syntax)))
           (iruby-mode)
-          (iruby-initialize-buffer-for impl))
+          ;; reset local variables after iruby-mode
+          (dolist (bind locals)
+            (set (car bind) (cdr bind)))
+          (when multibyte-p
+            (set-buffer-multibyte multibyte-p))
+          (iruby-initialize-impl-bindings impl))
         (setf (car cached-data) proc)))))
 
-;;;; TBD @ encodings in Emacs
-;; (symbol-plist 'enable-multibyte-characters)
 
 (defun run-iruby-new (command &optional name)
   "Create a new inferior Ruby process in a new buffer.
@@ -2059,7 +2074,7 @@ used"
     (set-buffer buffer)
     (iruby-mode) ;; may reset any buffer-local variables
     (setq iruby-buffer-impl-name name)
-    (iruby-initialize-buffer-for name)
+    (iruby-initialize-impl-bindings name)
 
     (iruby-remember-ruby-buffer buffer)
 
@@ -3213,7 +3228,7 @@ buffer as the current buffer, during `desktop-save'.
 This function returns an associative list representing a mapping for
 the following values in the current iruby-mode buffer:
 - :impl => `iruby-buffer-impl-name', needed for later restoring
-   any implementation-specific bindings under `iruby-initialize-buffer-for'
+   any implementation-specific bindings under `iruby-initialize-impl-bindings'
 - :cmd => `iruby-buffer-command' i.e for the original process
 - :dir => `default-directory' for the buffer, in Emacs
 - :mapped => list of buffer names, for buffers where `iruby-buffer' has
