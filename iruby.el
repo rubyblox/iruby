@@ -685,11 +685,6 @@ If no completion expression is configured, returns nil"
    "ruby expression for symbol name completion under the active
 implementation"))
 
-(defvar iruby-last-process-mark-point nil)
-;; NB this variable may be removed in some subsequent version
-(make-variable-buffer-local 'iruby-last-process-mark-point)
-
-
 (defcustom iruby-console-environment 'ask
   "Envronment to use for the `iruby-console-*' commands.
 If the value is not a string, ask the user to choose from the
@@ -839,7 +834,6 @@ This keymap inherits bindings from `comint-mode-map'"
     ("C-x C-q" iruby-maybe-switch-to-compilation)
     ("ESC <up>" iruby-previous-prompt)
     ("ESC <down>" iruby-next-prompt))
-
 
 (define-keymap-iruby iruby-minor-mode-map ()
 "Keymap for `iruby-minor-mode'"
@@ -1059,11 +1053,7 @@ once that feature has become available in this Emacs session")))
 
   (setq desktop-save-buffer 'iruby-desktop-misc-data)
 
-  ;; NB contrasted to comint's usage of `comint-get-old-input', which
-  ;; sends the previous input before edit, see alternately:
-  ;; `iruby-send-or-stage-input'
-  (setq comint-get-old-input 'iruby-get-old-input ;; iruby-send-or-stage-input DNW here
-        ;; FIXME implementation/user-config-specific @ prompt regexp
+  (setq comint-get-old-input 'iruby-get-old-input
         comint-use-prompt-regexp nil)
   (set (make-local-variable 'compilation-error-regexp-alist)
        iruby-error-regexp-alist)
@@ -1125,7 +1115,7 @@ This function provides a utility for `iruby-previous-prompt'"
         (t
          (goto-char start))))))
 
-(defun iruby-previous-input-start (point)
+(defun iruby-input-start (point)
   "If POINT is within an input area, move point to the end of the
 previous prompt preceding POINT - similarly, the beginning of the
 input area.
@@ -1137,7 +1127,7 @@ This function assumes that the subprocess' prompt is configured to not
 display additional printable text during continued input, such as with
 the --inf-ruby-mode prompt under irb.
 
-See also: `iruby-previous-input-end', `iruby-input-at-point'"
+See also: `iruby-input-end', `iruby-input-at-point'"
   (interactive "d")
   (let ((at point)
         (start point)
@@ -1175,13 +1165,13 @@ See also: `iruby-previous-input-end', `iruby-input-at-point'"
          )))))
 
 
-(defun iruby-previous-input-end (point)
+(defun iruby-input-end (point)
   (interactive "d")
   ;; FIXME does not actually move point past the current input,
   ;; except with new input not yet reprinted by comint
   ;;
   ;; nonetheless useful for `iruby-input-at-point'
-  (iruby-previous-input-start point)
+  (iruby-input-start point)
   (iruby-next-nonblank-output (point))
   (let ((match (text-property-search-backward 'field 'boundary 'eq)))
     (when match (goto-char (prop-match-beginning match))))
@@ -1190,45 +1180,76 @@ See also: `iruby-previous-input-end', `iruby-input-at-point'"
 
 (defun iruby-previous-prompt (point)
   (interactive "d")
-  (let ((next (progn (iruby-previous-input-start point)
-                     (point))))
-    (when (and (= next point) (not (zerop next)))
-      (iruby-previous-prompt (1- next)))))
+  (let ((at point)
+        end)
+    (when (and (null (get-text-property at 'iruby-prompt))
+               (setq end (previous-single-property-change at 'iruby-prompt)))
+      ;; backwards into previous prompt
+      (goto-char (setq at end)))
+    (when (and (get-text-property at 'iruby-prompt)
+               (setq end (previous-single-property-change at 'iruby-prompt))
+               (setq end (previous-single-property-change end 'iruby-prompt)))
+      (goto-char end)
+      (setq at end))
+    ;;; this would cause it to behave strangely when point begins on an
+    ;;; input field
+    ;; (setq end (next-single-property-change at 'iruby-prompt))
+    (when end
+      (goto-char end)
+      ;; move to an input field
+      (when (and end
+                 (get-text-property end 'field)
+                 (setq end (next-single-property-change end 'field)))
+        (goto-char end)))
+    ))
 
 
 (defun iruby-next-prompt (point)
   (interactive "d")
   (let ((at point)
-        start end
-        match)
-    (goto-char at)
-    (when (setq match (text-property-search-forward 'field 'output t nil))
-      (goto-char at) ;; reset after the property search moved point
-      (setq start (prop-match-beginning match)
-            end (prop-match-end match))
-      (cond
-        ((string-whitespace-p (buffer-substring-no-properties start end))
-         (iruby-next-nonblank-output start t))
-        (t
-         (goto-char end))))))
+        end)
+    (when (and (get-text-property at 'field)
+               (setq end (next-single-property-change at 'field)))
+      ;; move forward out of any non-input field
+      (goto-char end))
+
+    (when (and (null (get-text-property at 'iruby-prompt))
+               (setq end (next-single-property-change at 'iruby-prompt)))
+      ;; backwards into previous prompt
+      (goto-char (setq at end)))
+    ;;; this would cause it to behave strangely when point begins on an
+    ;;; input field
+    ;; (setq end (next-single-property-change at 'iruby-prompt))
+    (when end
+      (goto-char end)
+      ;;; move to an input field
+      (when (and end
+                 (get-text-property end 'field)
+                 (setq end (next-single-property-change end 'field)))
+        (goto-char end))
+      )))
+
 
 
 (defun iruby-input-at-point (point)
   "Retrieve any input at point
 
-See also: `iruby-previous-input-start', `iruby-previous-input-end',
+See also: `iruby-input-start', `iruby-input-end',
 `iruby-get-old-input'"
-  ;;
+  (interactive "d")
   (save-excursion
     (save-restriction
-      (let (start end)
-        (iruby-previous-input-start point)
+      (let (start match end expr)
+        (iruby-previous-prompt point)
         (setq start (point))
-        (iruby-previous-input-end point)
-        (setq end (point))
-        (setq expr (buffer-substring-no-properties start end))
+        (cond
+          ((and (setq match (text-property-search-forward 'iruby-prompt nil))
+                (goto-char (prop-match-beginning match))
+                (setq match (text-property-search-backward 'field 'output)))
+           (setq end (prop-match-end match)))
+          (t (setq end start)))
+        (setq expr (string-trim (buffer-substring-no-properties start end)))
         (when (interactive-p) (message "At point: %S" expr))
-        ;; (warn "EXPR (onto %S) %S" (get-text-property point 'field) expr)
         expr))))
 
 (defun iruby-get-old-input ()
@@ -1241,58 +1262,26 @@ of `comint-get-old-input'. Thus, this function may be used by
 `comint-send-input', to determine some section of earlier
 input to re-use under a certain condition of `point`.
 
-This function may be called as when `point' is located
-somewhere before the most recent `process-mark' in the
-process buffer, such as when the user has activated
-`comint-send-input' with `point' positioned somewhere
-earlier in the input history.
-
-Generally, `comint-send-input'  would be activated with
-the carriage return key, in an iruby process buffer.
-
-In summary, this function is a part of the automation for
-`comint-send-input' in iruby process buffers.
-
-This function assumes that the irb prompt is configured
-to display a single non-blank region of text on each initial
-input line, with no additional non-blank text displayed for
-any line of continued input. This would be the configuration
-of the irb prompt as available with the shell command
-
-  irb --inf-ruby-mode
-
-See also: `iruby-jump-to-process-mark',
-`iruby-previous-input-start',`iruby-previous-input-end',
-`iruby-get-input-at-point'"
+See also `iruby-send-or-stage-input'"
   (save-excursion
     (save-restriction
       (let* ((at (point))
              (at-field  (get-text-property at 'field))
+             (at-prompt (get-text-property at 'iruby-prompt))
              start end next-end match expr)
-
         (cond
-          ((eq at-field 'output)
-           ;;; (warn "At output")
-           ;; move point to the end of the output field,
-           ;; e.g to the end of the prompt string
-           (setq match
-                 (text-property-search-forward 'field 'output t))
-           (when match
+          (at-prompt
+           ;'; mov to end of current prompt
+           (when (setq match
+                       (text-property-search-forward 'iruby-prompt t 'eq))
              (goto-char (prop-match-end match))))
-          ((eq at-field 'boundary)
-           ;;; (warn "At boundary")
-           ;; point is at the end of an input line
-           ;;
-           ;; move point to the end of the previous output (typically a prompt)
-           (setq match
-                 (text-property-search-backward 'field 'output t))
-           (when match
-             (goto-char (prop-match-end match))))
-          (t ;; point is within an input region
-           ;; iruby-input-at-point should catch the text here ..
-           ))
-        (iruby-input-at-point (point))
-        ))))
+          (t ;; move to end of previous prompt
+           (when (setq match
+                       (text-property-search-backward 'iruby-prompt t nil))
+             (goto-char (prop-match-end match)))))
+        ;; return input at point
+        (iruby-input-at-point (point)))
+      )))
 
 (defun iruby-stage-old-input ()
   "Utility function for `iruby-send-or-stage-input'"
@@ -1325,7 +1314,7 @@ Otherwise, any input at the prompt will be sent to the iRuby process."
   (interactive)
   (let* ((initial (point))
          (buffer-end (goto-char (point-max)))
-         (prompt-end (progn (iruby-previous-input-start buffer-end)
+         (prompt-end (progn (iruby-input-start buffer-end)
                             (point))))
     (goto-char initial)
     (cond
@@ -1475,84 +1464,15 @@ the `command' value"
 This function will display a warning after any change of state other
 than exit, hangup, or finished for a ruby subprocess initialized with
 `run-iruby-new'"
-  ;; FIXME this function was receiving a 'hangup' value that was not a
-  ;; symbol, but instead a string terminated with a newline
-  ;; with GNU Emacs 27.2 (build 1, x86_64-pc-linux-gnu, GTK+ Version 3.24.27, cairo version 1.17.4)
-  ;; on Arch Linux
   (let ((status (process-status process)))
+    ;; NB the second arg delivered to the process sentinel
+    ;; will normally be an informative string.
+    ;;
+    ;; The "hangup" state may generally indicate a normal exit
     (unless (or (memq status '(exit finished))
-                (stringp state) (string= state "hangup"))
-      ;; NB the second arg delivered to the process sentinel
-      ;; will normally be an informative string
+                (and (stringp state) (string= state "hangup")))
       (warn "iRuby process %s state changed (%S): %S"
             process status state))))
-
-
-(defun iruby-jump-to-comint-last-output ()
-  "Switch to the ruby process buffer and move point to the position of
-`cominit-last-output-start' for the ruby process.
-
-This function may generally  place point at the same location as
-`iruby-jump-to-last-output'"
-  (interactive)
-  (let* ((proc (or (iruby-proc t)
-                   (error "No iruby-proc found")))
-         (buff (and proc (iruby-process-buffer proc))))
-    (switch-to-buffer buff)
-    (goto-char comint-last-output-start)))
-
-
-
-(defun iruby-jump-to-process-mark ()
-  "Switch to the ruby process buffer and move point to the position of
-the `process-mark' for the ruby process.
-
-See also: `iruby-jump-to-last-output'"
-  (interactive)
-  (let* ((proc (or (iruby-proc t)
-                   (error "No iruby-proc found")))
-         (buff (and proc (iruby-process-buffer proc)))
-         (mark (process-mark proc)))
-    (switch-to-buffer buff)
-    (goto-char mark)))
-
-
-(defun iruby-jump-to-last-output ()
-  "Switch to the ruby process buffer and move point to the start of
-the last output text.
-
-If no output has been produced subsequent of the previous input to
-the ruby process - such as when entering an empty line of text, or
-within a continued block under current input - `point' will then be
-positioned at the start of the line representing the last prompt
-displayed.
-
-See also: `iruby-jump-to-process-mark', `iruby-previous-input-start',
-`iruby-previous-input-end', `iruby-show-last-output'"
-  (interactive)
-  ;; NB this may generally reach the same point as the value of
-  ;; `comint-last-output-start', albeit independent of some
-  ;; automation in how the latter variable is set.
-  ;;
-  ;; NB this differs in relation to `iruby-previous-input-start'
-  ;; and `iruby-previous-input-end' in that those functions will
-  ;; utilize text properties typically set by comint, for the comint
-  ;; configuration in an iruby process buffer. Those functions were
-  ;; produced originally as utilities for `iruby-get-old-input'. The
-  ;; functions may operate generally in a manner of text scanning on
-  ;; the contents of the iruby process buffer, towards a purpose of
-  ;; reusing earlier input.
-  ;;
-  ;; This function and the similar, here, were implemented for
-  ;; a purpose of capturing the most recent output fromt the ruby
-  ;; process. This set of functions will use local variables
-  ;; assumed to have been set by various local hook functions, during
-  ;; output presentation by comint within iruby process buffers
-  (let* ((proc (or (iruby-proc t)
-                   (error "No iruby-proc found")))
-         (buff (and proc (iruby-process-buffer proc))))
-    (switch-to-buffer buff)
-    (goto-char iruby-last-process-mark-point)))
 
 (defun iruby-get-last-output (&optional proc)
   "Return the last output from the ruby process PROC as a string.
@@ -2228,33 +2148,6 @@ See also: `iruby-show-last-output', `iruby-get-last-output'"
       (comment-region start (point)))))
 
 
-(defun iruby-update-last-mark (string)
-  "Update `iruby-last-process-mark-point' and return STRING,
-before STRING may be written to the process buffer.
-
-This function should be called with a ruby process buffer as
-the current buffer.
-
-This is a hook function used with `comint-preoutput-filter-functions'
-in `iruby-mode' buffers"
-  ;; NB The string may include any prompt text,
-  ;; generally as the last line in the string
-    (cond
-      ((null iruby-last-process-mark-point)
-       ;; reached when handling the first line of output
-       (setq iruby-last-process-mark-point
-             (length string)))
-      (t
-       (let ((markerpt (marker-position
-                        (process-mark
-                         (or (get-buffer-process (current-buffer))
-                             (error "No process in buffer %s"
-                                    (current-buffer)))))))
-         (setq iruby-last-process-mark-point markerpt))))
-    ;; must return the string, if used directly under
-    ;; `comint-preoutput-filter-functions'
-    string)
-
 (defun iruby-preoutput-filter (output)
   "Pre-output hook function for iRuby process buffers
 
@@ -2266,11 +2159,14 @@ further output processing by comint, as the text to be
 inserted to the iruby-mode buffer
 
 See also: `comint-preoutput-filter-functions' [variable]"
+  (let* ((match-start (string-match iruby-prompt-pattern output))
+         ;; FIXME match-end 0 ... DNW  later, but 1 DNW here
+         (match-end (when match-start (match-end 0))))
+    (when match-start
+      (put-text-property match-start match-end 'iruby-prompt t output))
+    output))
 
-  (iruby-update-last-mark output)
-
-  output
-  )
+(add-to-list 'text-property-default-nonsticky '(iruby-prompt . t))
 
 (defun iruby-output-filter (output)
   "Post-output hook function for iRuby process buffers
@@ -2392,7 +2288,7 @@ See also: `iruby-send-last-sexp'"
         (save-restriction
           (let* ((buffer-end (point-max))
                  (prompt-end
-                  (progn (iruby-previous-input-start buffer-end)
+                  (progn (iruby-input-start buffer-end)
                          (point))))
             (unless (= prompt-end buffer-end)
               (let ((input (buffer-substring-no-properties prompt-end buffer-end)))
@@ -2493,7 +2389,7 @@ See also: `iruby-use-process'"
       (error "Found no iRuby process")))
   (when eob-p
     (push-mark)
-    (iruby-previous-input-start (point-max))))
+    (iruby-input-start (point-max))))
 
 
 (defun iruby-switch-to-default-buffer ()
