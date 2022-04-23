@@ -1717,7 +1717,7 @@ evaluation of the BODY forms. This macro itself will not store the
           (iruby-buffer-process
            (iruby-get-prevailing-buffer (not require-live))))))
 
-(defun iruby-switch-to-process (process)
+(defun iruby-switch-to-process (&optional process)
   "If the iRuby process buffer denoted by `process' is displayed in
 a buffer on the current frame, then switch to that buffer. Else, switch
 to the iRuby process buffer, using the window of the current buffer.
