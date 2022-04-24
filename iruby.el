@@ -355,7 +355,7 @@ Else, this returns the syntax entry `iruby-default-ruby-syntax'."
      (cl-destructuring-bind (name feature stx abbrev &optional mode)
          elt
        (when (eq major-mode (or mode feature))
-         (return elt))))
+         (cl-return elt))))
    (iruby-find-syntax (or iruby-ruby-syntax iruby-default-ruby-syntax))))
 
 
@@ -999,15 +999,18 @@ The following commands are available:
   :abbrev-table (iruby-ruby-abbrev-table)
   :interactive nil
   (setq comint-prompt-regexp iruby-prompt-pattern) ;; TBD. see next @ read-only
-  (ruby-mode-variables) ;; NB ruby-mode dep. See alt enh-ruby-mode.el
+
+  (when (equal (or iruby-ruby-syntax iruby-default-ruby-syntax)
+               "ruby-mode")
+  (ruby-mode-variables)
   (when (bound-and-true-p ruby-use-smie)
     (set (make-local-variable 'smie-forward-token-function)
          #'iruby-smie--forward-token)
     (set (make-local-variable 'smie-backward-token-function)
-         #'iruby-smie--backward-token))
+         #'iruby-smie--backward-token)))
 
   (set (make-local-variable 'comint-delimiter-argument-list)
-        '(?\| ?& ?< ?> ?\( ?\) ?\; ?\"))
+        '(?\| ?& ?< ?> ?\( ?\) ?\; ?\" ?\.))
 
   (add-hook 'comint-preoutput-filter-functions 'iruby-preoutput-filter nil t)
   (add-hook 'comint-output-filter-functions 'iruby-output-filter nil t)
@@ -1714,7 +1717,7 @@ See also:
       (walk-windows (lambda (wn)
                       (when (eq (window-buffer wn) buff)
                         (setq window wn)
-                        (return-from window-found)))
+                        (cl-return-from window-found)))
                     nil frame))
     (cond
       (window (select-window window))
