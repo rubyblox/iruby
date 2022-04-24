@@ -321,8 +321,9 @@ See also: `edit-abbrevs'"
                    (symbol :tag "Mode function name"))
                   )))
 
-(defcustom iruby-default-ruby-syntax "erm"
-  "Ruby language mode for input completion support in Ruby buffers
+(defcustom iruby-default-ruby-syntax "ruby-mode"
+  "Default Ruby language mode for input completion support in Ruby
+buffers.
 
 This value must match a key value in the associative list,
 `iruby-ruby-modes'"
@@ -336,45 +337,53 @@ This value must match a key value in the associative list,
 
 See also: `iruby-default-ruby-syntax'"))
 
-(cl-defun iruby-find-syntax (&optional
-                               (name (or iruby-ruby-syntax
-                                         iruby-default-ruby-syntax))
-                               noerr)
-  (let ((elt (cl-assoc name iruby-ruby-modes :test #'equal)))
-    (or elt noerr
-        (error "iRuby syntax not found: %S" name))))
+(defun iruby-find-syntax (&optional name)
+  "Return the syntax entry from `iruby-ruby-modes' for the current buffer.
 
-(cl-defun iruby-ruby-syntax-table (&optional (syntax
-                                              (or iruby-ruby-syntax
-                                                  iruby-default-ruby-syntax)))
-  (destructuring-bind (name feature stx-table abbrev-table &optional mode)
+If the current buffer is using a `major-mode' represented in `iruby-ruby-modes'
+this returns the syntax entry for that major-mode.
+
+Else, this returns the syntax entry `iruby-default-ruby-syntax'."
+  ;; FIXME ensure that this is used early enough to provide reasonable
+  ;; defaulting for `iruby-mode'
+  (or
+   (when name
+     ;; determine the syntax for the provided syntax name
+     (or (cl-find name iruby-ruby-modes :key #'car :test #'equal)
+         (error "No iruby-ruby-modes syntax found for name %S" name)))
+   (cl-dolist (elt iruby-ruby-modes)
+     (cl-destructuring-bind (name feature stx abbrev &optional mode)
+         elt
+       (when (eq major-mode (or mode feature))
+         (return elt))))
+   (iruby-find-syntax (or iruby-ruby-syntax iruby-default-ruby-syntax))))
+
+
+(defun iruby-ruby-syntax-table (&optional syntax)
+  (cl-destructuring-bind (name feature stx abbrev &optional mode)
       (iruby-find-syntax syntax)
     (require feature)
-    (symbol-value stx-table)))
+    (symbol-value stx)))
 
 ;;; ad-hoc test
 ;; (type-of (iruby-ruby-syntax-table "erm"))
 ;; => char-table
 
-(cl-defun iruby-ruby-abbrev-table (&optional (syntax
-                                              (or iruby-ruby-syntax
-                                                  iruby-default-ruby-syntax)))
+(defun iruby-ruby-abbrev-table (&optional syntax)
   ;; see also: `edit-abbrevs'
-  (destructuring-bind (name feature stx-table abbrev-table &optional mode)
+  (cl-destructuring-bind (name feature stx abbrev &optional mode)
       (iruby-find-syntax syntax)
     (require feature)
-    (symbol-value abbrev-table)))
+    (symbol-value abbrev)))
 
 
 ;;; ad-hoc test
 ;; (type-of (iruby-ruby-abbrev-table "ruby-mode"))
 ;; => vector
 
-(cl-defun iruby-ruby-mode-function (&optional (syntax
-                                               (or iruby-ruby-syntax
-                                                   iruby-default-ruby-syntax)))
+(defun iruby-ruby-mode-function (&optional syntax)
   ;; see also: `edit-abbrevs'
-  (destructuring-bind (name feature stx-table abbrev-table &optional mode)
+  (cl-destructuring-bind (name feature stx abbrev &optional mode)
       (iruby-find-syntax syntax)
     (require feature)
     (or mode feature)))
@@ -398,7 +407,7 @@ Used by these commands to determine defaults."
   (remove-if-not
    #'fboundp
    (mapcar #'(lambda (elt)
-               (destructuring-bind (name feature stx-table abbrev-table &optional mode)
+               (cl-destructuring-bind (name feature stx abbrev &optional mode)
                    elt
                  (or mode feature)))
            iruby-ruby-modes)))
@@ -894,7 +903,6 @@ not have any completion support enabled in iRuby"
       (apply #'warn message format-args))))
 
 
-
 (defvar iruby-warnings-once nil
   "Session-local storage for `iruby-warn-once'")
 
@@ -949,20 +957,25 @@ See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
   "Implementation name for a Ruby process buffer")
 (make-variable-buffer-local 'iruby-buffer-impl-name)
 
-(defun iruby-initialize-impl-bindings (&optional impl)
+(defun iruby-initialize-impl-bindings (&optional impl syntax)
   ;; shared forms for `iruby-mode' (e.g under `run-iruby-new')
   ;; and `iruby-restart-process'
   ;;
   ;; This is implemented here rather than in iruby-mode, as iruby-mode
   ;; does not presently receive an implementation name
   (let ((proc (get-buffer-process (current-buffer)))
-        (use-impl (or impl iruby-buffer-impl-name)))
+        (use-impl (or impl iruby-buffer-impl-name))
+        (use-syntax (or syntax iruby-ruby-syntax iruby-default-ruby-syntax)))
     (cond
       (proc
        (setq iruby-buffer-command (process-command proc))
+       (when use-syntax
+         (setq iruby-ruby-syntax use-syntax)
+         (set-syntax-table (iruby-ruby-syntax-table use-syntax)))
        (cond
          (use-impl
           (setq
+           iruby-buffer-impl-name use-impl
            iruby-impl-binding-expr (ignore-errors
                                      (iruby-get-impl-binding-expr use-impl))
            iruby-impl-completion-expr (ignore-errors
@@ -1358,19 +1371,33 @@ PROMPT will default to the string, \"Ruby Implementation: \""
       txt)))
 
 ;;;###autoload
-(defun iruby (&optional impl)
-  "Run an inferior Ruby process in a buffer.
-With prefix argument, prompts for which Ruby implementation
-\(from the list `iruby-implementations') to use.
+(defun iruby (&optional impl new)
+  "Run or switch to a Ruby process.
 
-If there is a Ruby process running in an existing buffer, switch
-to that buffer. Otherwise create a new buffer."
+With prefix argument, prompts for which Ruby implementation to use, from
+the list `iruby-implementations'.
+
+Otherwise, if there is an existing Ruby process in an iRuby buffer,
+switch to that buffer.
+
+IMPL should be nil, or a string match the name of an implementation in
+`iruby-implementations'.
+
+SYNTAX should be nil, or a string matching a ruby-mode syntax in
+`iruby-ruby-modes'.
+
+If either value is nil, a reasonable default will be computed for that
+value.
+
+To run a ruby implementation not listed in `iruby-implementations', see
+also: `run-iruby'"
   (interactive (list (if current-prefix-arg
                          (iruby-read-impl)
-                       iruby-default-implementation)))
+                       iruby-default-implementation)
+                     current-prefix-arg))
   (let ((%impl (or impl iruby-default-implementation)))
     (let ((command (iruby-build-impl-cmd %impl)))
-      (run-iruby command %impl current-prefix-arg))))
+      (run-iruby command %impl new))))
 
 
 (defun iruby-get-prevailing-buffer (&optional no-filter-live)
@@ -1418,7 +1445,7 @@ match irrespective of whether the buffer's iRuby process is running"
         )))
 
 ;;;###autoload
-(defun run-iruby (&optional command name always)
+(defun run-iruby (&optional command name new)
   "Run an inferior Ruby process, input and output in a buffer.
 
 If there is a process already running in a corresponding buffer,
@@ -1441,25 +1468,27 @@ Runs the hooks `comint-mode-hook' and `iruby-mode-hook'.
 
 Type \\[describe-mode] in the process buffer for the list of commands.
 
-If `always' is non-nil, this will launch a new ruby process whether or
+If NEW is non-nil, this will launch a new ruby process whether or
 not a ruby process is already running for the implementation denoted in
 the `command' value"
   ;; This function is interactive and named like this for consistency
   ;; with `run-python', `run-octave', `run-lisp' and so on.
   ;; We're keeping both it and `iruby' for backward compatibility.
-  (interactive (list (let ((cmd (if current-prefix-arg
-                                    (read-shell-command "Run irb: ")
-                                  ;; NB read-shell-command would return
-                                  ;; "" on no input
-                                  "")))
-                       (if (zerop (length cmd))
-                           (iruby-build-impl-cmd iruby-default-implementation)
-                         cmd))))
-  (let* ((%command (or command (iruby-build-impl-cmd)))
-         (%name (or name (file-name-nondirectory
-                          (car (split-string-and-unquote %command)))))
-         (buffer (iruby-get-prevailing-buffer)))
-    (run-iruby-or-pop-to-buffer %command %name buffer always)))
+  (interactive (let ((cmd (if current-prefix-arg
+                              (read-shell-command "Run Ruby interactively: ")
+                            ""))
+                     (impl (unless current-prefix-arg
+                             iruby-default-implementation)))
+                 (when (zerop (length cmd))
+                   (setq cmd
+                         (iruby-build-impl-cmd iruby-default-implementation)))
+                 (list cmd impl current-prefix-arg)))
+  (let* ((%command (cl-etypecase command
+                     (string (split-string-and-unquote command))
+                     (cons command)
+                     (null (iruby-build-impl-cmd name))))
+         (%name (or name (file-name-nondirectory (car %command)))))
+    (run-iruby-or-pop-to-buffer %command %name new)))
 
 (defun iruby-process-sentinel (process state)
   "Process sentinel installed by `run-iruby-new'
@@ -1857,7 +1886,7 @@ See also: `iruby-process-buffer', `iruby-restart-process',
   ;;
   ;; For purposes of user interface support, closed processes will
   ;; generally remain in `iruby-process-buffers' until removed with this
-  ;; function, via `kill-buffer-hook'.
+  ;; function, as via `kill-buffer-hook'.
   ;;
   ;; Once a buffer is removed from `iruby-process-buffers', it will
   ;; no longer be available via `iruby-read-process' and any interactive
@@ -1987,20 +2016,21 @@ will be seleted by `iruby-read-process-interactive'"
     (with-current-buffer buff
       (let ((cmd (process-command process))
             (impl iruby-buffer-impl-name)
+            (syntax iruby-ruby-syntax)
             (multibyte-p enable-multibyte-characters)
             (locals (cl-remove 'enable-multibyte-characters
                                (buffer-local-variables buff)
                                :key 'car :test 'eq))
-            newbuff proc)
+            usebuff proc)
         (iruby-close-process process)
         ;; This calls `comint-exec' directly, without reinitilizing the
         ;; buffer as within `run-iruby-new'
         (with-iruby-process-environment ()
-          (setq newbuff
+          (setq usebuff
                 (comint-exec buff (process-name process)
                              (car cmd) nil (cdr cmd))
-                proc (get-buffer-process newbuff)))
-        (set-buffer newbuff)
+                proc (get-buffer-process usebuff)))
+        (set-buffer usebuff) ;; to be sure ...
         (let ((iruby-default-ruby-syntax (or iruby-ruby-syntax
                                              iruby-default-ruby-syntax)))
           (iruby-mode)
@@ -2008,8 +2038,9 @@ will be seleted by `iruby-read-process-interactive'"
           (dolist (bind locals)
             (set (car bind) (cdr bind)))
           (when multibyte-p
+            ;; `enable-multibyte-characters' cannot be set with 'set'
             (set-buffer-multibyte multibyte-p))
-          (iruby-initialize-impl-bindings impl))
+          (iruby-initialize-impl-bindings imp syntax))
         (setf (car cached-data) proc)))))
 
 
@@ -2029,10 +2060,11 @@ used"
             (string (split-string-and-unquote command))
             (cons command)))
          (name (or name (file-name-nondirectory (car commandlist))))
-         (buffer (current-buffer))
-         process
          (buffer-name (generate-new-buffer-name (format "*%s*" name)))
-         (process-environment process-environment))
+         ;; NB this should pick up any current major-mode for computing
+         ;; the syntax to use in the iruby buffer
+         (syntax (car (iruby-find-syntax)))
+         buffer process)
 
     (with-iruby-process-environment ()
       (setq buffer
@@ -2046,32 +2078,32 @@ used"
 
     (set-buffer buffer)
     (iruby-mode) ;; may reset any buffer-local variables
-    (setq iruby-buffer-impl-name name)
-    (iruby-initialize-impl-bindings name)
-
+    (iruby-initialize-impl-bindings name syntax)
     (iruby-remember-ruby-buffer buffer)
 
-    ;; NB this returns a buffer object
+    ;; return a buffer object
     (iruby-switch-to-process (get-buffer-process buffer))
     ))
 
 
-(defun run-iruby-or-pop-to-buffer (command &optional name buffer always)
+(defun run-iruby-or-pop-to-buffer (command &optional name new)
   ;; NB used in
   ;; - `run-iruby'
   ;; - `iruby-console-run'
-  (if (or always
-          (not (and buffer
-                    (buffer-live-p buffer)
-                    (iruby-process-running-p buffer))))
-      (run-iruby-new command name)
-    (iruby-switch-to-process (iruby-buffer-process buffer))
+  ;;
+  ;; FIXME fold this into `run-iruby'
+  (let ((buffer (unless new (iruby-get-prevailing-buffer))))
+    (if (or new (not (and buffer
+                          (buffer-live-p buffer)
+                          (iruby-process-running-p buffer))))
+        (run-iruby-new command name)
+      (iruby-switch-to-process (iruby-buffer-process buffer)))
     (unless (and (string= iruby-buffer-impl-name name)
                  (equal iruby-buffer-command command))
       (warn (concat "Found an iRuby buffer, but it was created using "
                     "a different command for %s. Previous: %S")
-             iruby-buffer-impl-name
-             iruby-buffer-command))))
+            iruby-buffer-impl-name
+            iruby-buffer-command))))
 
 (defun iruby-proc (&optional noerr)
   "Return the inferior Ruby process for the current buffer or project.
