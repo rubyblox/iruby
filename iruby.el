@@ -420,79 +420,80 @@ Used by these commands to determine defaults."
   :group 'iruby)
 
 
-(defcustom iruby-ruby-irb-args '("-r" "irb" "-r" "irb/completion"
-                                   "-e" "IRB.start" "--")
-  "List of arguments for ruby, when running irb via ruby
+(defcustom iruby-irb-impl-args '("-r" "irb" "-e" "IRB.start" "--")
+  "List of arguments for the ruby implementation, for initializing irb
 
-Generally, this list should iniclude the string \"--\" as a trailing
-element. Arguments after that string here would be provided as arguments
-to irb, as under a direct call to ruby"
+Generally, this list should include the string \"--\" as a trailing
+element. Arguments after that string would be provided as arguments
+to irb, such as under a direct call to ruby"
   :type '(repeat string)
-  :group 'iruby)
+  :group 'iruby-impl)
+
+(defcustom iruby-irb-args '("-r" "irb/completion" "--inf-ruby-mode")
+  "List of arguments for irb"
+  :type '(repeat string)
+  :group 'iruby-impl)
 
 
 (defcustom iruby-implementations
   ;; FIXME needs a custom widget type, this ostensibly simple syntax
-  '(("irb"
-     (:command iruby-build-irb-cmd "--inf-ruby-mode")
+  `(("irb"
+     (:command iruby-build-irb-cmd)
      (:binding "IRB.CurrentContext.workspace.binding")
-     ;;; FIXME needs docs for the args to the format string & application
-     (:completion "IRB::InputCompletor::CompletionProc.call('%s','%s').compact.each{ |x| puts x }"))
-
-    ;; NB concerning behaviors of `iruby-build-irb-cmd':
-    ;;
-    ;; insofar as for implementations defined here with defcustom ...
-    ;;
-    ;; When launching irb via a "ruby" cmd, e.g "ruby" or "ruby27" etc,
-    ;; the ruby cmd will receive arguments in `iruby-ruby-irb-prefix',
-    ;; via `impl-cmd-list'. The args listed for irb, as here,
-    ;; will then be added after the trailing "--", such that should be
-    ;; in `iruby-ruby-irb-prefix', subsequetnly returned by
-    ;; `impl-cmd-list'
-    ;;
-    ;; FIXME it's functionally normal, though nontrivial to document
-    ;;
-    ;; NB it may not become any more trivial if trying to define any iruby
-    ;; implementations with eieio classes & instances
-    ;;
+     ;; FIXME deprecrate the internal completion handling, in lieu of
+     ;; eglot - eventually, in the iruby process buffer
+     ,(list :completion
+            (concat "IRB::InputCompletor::CompletionProc."
+                    "call('%s','%s').compact.each{ |x| puts x }")))
     ("ruby"
-     ;; FIXME add and implement (:after_init [form]+)
-     ;;  such that can be used to disable history recording in IRB/...
-     ;; FIXME TBD flagging the ruby process as running under iruby,
-     ;;  such that can be used for dispatching in irbrc, for arbitrary user code
-     (:command iruby-build-irb-cmd "--inf-ruby-mode")
+     (:command iruby-build-irb-cmd )
      (:binding "IRB.CurrentContext.workspace.binding")
-     (:completion "IRB::InputCompletor::CompletionProc.call('%s','%s').compact.each{ |x| puts x }"))
-
+     ,(list :completion
+            (concat "IRB::InputCompletor::CompletionProc."
+                    "call('%s','%s').compact.each{ |x| puts x }")))
     ("jruby"
-     (:command "jruby -S irb --prompt default --noreadline -r irb/completion")
-     (:binding) ;; FIXME needs test
-     (:completion) ;; FIXME needs test
-     )
+     (:command iruby-build-irb-cmd)
+     ;; FIXME duplicate code here, basically for all but pry
+     (:binding "IRB.CurrentContext.workspace.binding")
+     ,(list :completion
+            (concat "IRB::InputCompletor::CompletionProc."
+                    "call('%s','%s').compact.each{ |x| puts x }")))
 
     ("rubinius"
      (:command "rbx -r irb/completion")
-     (:binding) ;; FIXME needs test
+     (:binding "IRB.CurrentContext.workspace.binding") ;; FIXME untested
      (:completion) ;; FIXME needs test
      )
 
     ("yarv"
      (:command "irb1.9 -r irb/completion")
-     (:binding) ;; FIXME needs test
+     (:binding "IRB.CurrentContext.workspace.binding") ;; FIXME untested
      (:completion) ;; FIXME needs test
      )
 
      ("macruby"
+     ;; (:command-name "macirb")
      (:command "macirb -r irb/completion")
-     (:binding) ;; FIXME needs test
+     (:binding "IRB.CurrentContext.workspace.binding") ;; FIXME untested
      (:completion) ;; FIXME needs test
      )
 
     ("pry"
      (:command "pry")
      (:binding "Pry.toplevel_binding")
-     (:completion) ;; FIXME needs test
-     )
+     ,(list :completion
+            (concat "proc { |expr| "
+                    "if defined?(pry_instance.complete); "
+                    ;;
+                    ;; NB only the pry_instance case has been tested here
+                    ;;
+                    "puts pry_instance.complete(expr); "
+                    "elsif defined?(_pry_.complete); "
+                    "puts _pry_.complete(expr); "
+                    "elsif defined?(_pry_); "
+                    "Pry.config.completer.build_completion_proc(binding, _pry_)."
+                    "call(expr).compact.each{ |x| puts x }; "
+                    "end; }.call('%s')")))
     )
   "An alist mapping Ruby implementation names to Irb commands.
 CDR of each entry must be a string, a function, a list of strings or
@@ -553,84 +554,55 @@ shell command."
 ;; (assq :command (iruby-impl-props iruby-default-implementation))
 
 (defun iruby-build-impl-cmd (&optional impl)
+  ;; FIXME revise this - note usage [X]
+  ;;
   ;; parse a command specifier provided under iruby-implementations,
   ;; given an implementation name onto the same
   (let* ((%impl (or impl iruby-default-implementation))
          (implprops (iruby-impl-props %impl))
          (cmd (cdr (assq :command implprops))))
-    (cl-labels ((join (argv)
+    (cl-labels ((to-l (argv)
                   (cl-etypecase argv
                     (string (split-string-and-unquote argv))
-                    (list argv)
-                    ))
+                    (list argv)))
                 (parse (impl elt)
                   (cl-typecase elt
                     (cons
-                     (join (mapcan #'(lambda (%elt)
-                                       (join (parse impl %elt)))
+                     (to-l (mapcan #'(lambda (%elt)
+                                       (to-l (parse impl %elt)))
                                    elt)))
                     (null
-                     (error "Unknown ruby implementation: %s" impl))
-                    (symbol (funcall elt impl))
+                     (error "Unknown implementation: %s" impl))
+                    (symbol (to-l (funcall elt impl)))
                     (string (split-string-and-unquote elt))
                     (t (error "Unknown command syntax for implementation %S: %S"
                               impl elt)))))
       (parse %impl (copy-list cmd)))))
 
 ;; (iruby-build-impl-cmd)
+;; (iruby-build-impl-cmd "irb")
+;; (iruby-build-impl-cmd "ruby")
 ;; (iruby-build-impl-cmd "jruby")
 ;; (iruby-build-impl-cmd "n/a")
 
-(defun iruby-build-irb-cmd (name &optional rest-args)
-  ;; NB This will resuse the implementation name as the command name for
-  ;; the implemmentation.
-  ;;
-  ;; The implementation name would generally be provided as a CAR in
-  ;; some element of `iruby-implementations', with this function's
-  ;; name then provided as the CDR or the first element in the
-  ;; CDR of that element of `iruby-implementations'. Thus, the first
-  ;; element of the value returned by this function would be used
-  ;; as the name of the ruby or irb implementation to launch
-  ;; under comint.
-  ;;
-  ;; If the implementation name in NAME does begin with either of the
-  ;; strings  "irb" or "ruby", this will return the cons of NAME and
-  ;; REST-ARGS
-  ;;
-  ;; This function will accept e.g "irb27" or "ruby-dev" as an
-  ;; implementation name, then returning a list of command line argument
-  ;; values in a manner similar to either the "irb" or "ruby" case.
-  ;;
-  ;; FIXME this custom configuration does not allow for providing an
-  ;; implementation name with version suffix, independent of one of:
-  ;;
-  ;; A) a complete implementation description for the versioned impl,
-  ;;   under `iruby-implementations' - or
-  ;;
-  ;; B) a complete command string or list (absent of binding delcs,
-  ;;    etc) as the `iruby-default-implementation' and independent
-  ;;    to the following function - or
-  ;;
-  ;; C) a versioned implementaiton named beginning with "irb" or "ruby",
-  ;;    such that this implementation name would be provided
-  ;;    independent of 'customize-option' as the value of
-  ;;    `iruby-default-implementation'.
-  ;;
-  ;;    In effect, this defines an implementation class for each of the
-  ;;    "ruby and "irb" implementations
-  (let ((cmd-name name))
-    (cond
-      ((string-match "^irb" cmd-name)
-       (cons cmd-name (cons (iruby-irb-rl-arg (cons cmd-name rest-args))
-                            rest-args)))
-      ((string-match "^ruby" cmd-name)
-       ;; NB ensuring that any rest-args will appear after the args for
-       ;; launching irb via ruby
-       (let ((%prefix (cons cmd-name iruby-ruby-irb-args)))
-         (append %prefix (list (iruby-irb-rl-arg %prefix))
-                 rest-args)))
-      (t (warn "iruby-build-irb-cmd: Unknown implementation %s" name)
-         (cons cmd-name rest-args)))))
+;; (iruby-impl-props "jruby")
+
+(defun iruby-build-irb-cmd (name &rest rest)
+  (let* ((cmd-name name) ;; FIXME ... not always the same as the impl name
+         (rest-args (if (string-match "irb" name) ;; irb-p ...
+                        (append iruby-irb-args rest)
+                      (append iruby-irb-impl-args iruby-irb-args rest)))
+         (rl-arg (iruby-irb-rl-arg (cons cmd-name rest-args))))
+    (cons cmd-name (append rest-args (list rl-arg)))))
+
+;; (iruby-irb-rl-arg '("irb"))
+;; (iruby-irb-rl-arg '("ruby" "-r irb" "-e" "IRB.start" "--"))
+;; (iruby-irb-rl-arg '("jruby" "-r irb" "-e" "IRB.start" "--"))
+
+;; (iruby-build-irb-cmd "irb")
+;; (iruby-build-irb-cmd "ruby")
+;; (iruby-build-irb-cmd "jruby")
+
 
 (defun iruby-irb-rl-arg (cmdlist)
   (let* ((output (shell-command-to-string
@@ -639,15 +611,16 @@ shell command."
          (fields (split-string (string-trim-right output) "\s+"))
          (impl (car fields))
          (version (cadr fields)))
-    (unless (string= impl "irb")
-      (error "Unknown irb implementation: %s" output))
+
     ;; parsing only the major.minor.patchlevel versions here, for
     ;; compatibility with Emacs `version-to-list'. This may leave
     ;; out any ".pre...." suffix in the irb version string, such that
     ;; `version-to-list' may be unable to parse
-    (setq version (mapconcat 'identity
-                             (subseq (split-string version "\\." t) 0 3)
-                             "."))
+    (setq version (or (ignore-errors
+                        (mapconcat 'identity
+                                   (subseq (split-string version "\\." t) 0 3)
+                                   "."))
+                      "9.9.9"))
     (cond
       ((ignore-errors (version<= "1.2.0" version)) "--nomultiline")
       (t "--noreadline"))))
@@ -1348,7 +1321,7 @@ Otherwise, any input at the prompt will be sent to the iRuby process."
 ;; -----
 ;;
 
-(defun iruby-buffer-in-directory (dir)
+(defun iruby-directory-buffer (dir)
   (setq dir (expand-file-name dir))
   (catch 'buffer
     (dolist (buffer (mapcar #'cdr iruby-process-buffers))
@@ -1435,7 +1408,7 @@ match irrespective of whether the buffer's iRuby process is running"
           (let ((project-dir (locate-dominating-file default-directory
                                                      #'iruby-console-match)))
             (when project-dir
-              (check-buffer (iruby-buffer-in-directory project-dir)))))
+              (check-buffer (iruby-directory-buffer project-dir)))))
         (check-buffer iruby-default-ruby-buffer)
         (cl-block last
           (dolist (elt iruby-process-buffers)
@@ -1571,7 +1544,7 @@ See also: `iruby-get-last-output', `iruby-print-result'"
 (defun iruby-process-impl (whence)
   ;; utility function, used in `iruby-minor-modeline-default-label'
   (let* ((buffer
-          (etypecase whence
+          (cl-etypecase whence
             (process (iruby-process-buffer whence))
             (buffer whence)
             (string (or (cdr (cl-find whence iruby-process-buffers
@@ -1610,7 +1583,7 @@ See also: Customization for `iruby-minor-mode-prefix', `iruby-app-name'"
 (defun iruby-buffer-short-name (whence)
   ;; utility function for `iruby-read-process'
   (cl-block self
-    (let ((name (etypecase whence
+    (let ((name (cl-etypecase whence
                   (string whence)
                   (buffer (cond
                             ((buffer-live-p whence)
@@ -1720,7 +1693,7 @@ See also:
   (interactive
    (iruby-read-process-interactive  "Switch to iRuby Process:"))
   (cl-block top
-    (let ((buff (etypecase process
+    (let ((buff (cl-etypecase process
                   (process (iruby-process-buffer process))
                   (buffer process)
                   (null
@@ -1870,7 +1843,7 @@ See also: `iruby-process-buffer', `iruby-restart-process',
                                     iruby-process-buffers)))
 
 (defun iruby-remove-process-buffer (whence)
-  (let* ((proc (etypecase whence
+  (let* ((proc (cl-etypecase whence
                 (process whence)
                 (buffer (iruby-buffer-process whence))))
          (elt (assq proc iruby-process-buffers)))
@@ -2592,8 +2565,6 @@ Then switch to the process buffer."
          (previous-filter (process-filter proc))
          (kept "")
          completions)
-    ;;;; (warn "Completions. prefix %S expr %S" prefix expr)
-
     (unwind-protect
          (progn
            (set-process-filter proc
@@ -2602,44 +2573,9 @@ Then switch to the process buffer."
                                  ;; ensure that the string is not displayed:
                                  nil))
            (let ((completion-snippet
-                  (format
-                   (concat
-                    iruby-impl-completion-expr
-                    "; nil;\n"
-
-                    ;; FIXME  The following needs tests under impl-specific
-                    ;; :completion exprs
-                    ;;
-                    ;; supporting only IRB/Ruby, for now
-
-                    ;; "proc { |expr, line|"
-                    ;; "  require 'ostruct';"
-                    ;; "  old_wp = defined?(Bond) && Bond.started? && Bond.agent.weapon;"
-                    ;; "  begin"
-                    ;; "    Bond.agent.instance_variable_set('@weapon',"
-                    ;; "      OpenStruct.new(:line_buffer => line)) if old_wp;"
-                    ;; "    if defined?(_pry_.complete) then"
-                    ;; "      puts _pry_.complete(expr)"
-                    ;; "    elsif defined?(pry_instance.complete) then"
-                    ;; "      puts pry_instance.complete(expr)"
-                    ;; "    else"
-                    ;; "      completer = if defined?(_pry_) then"
-                    ;; "        Pry.config.completer.build_completion_proc(binding, _pry_)"
-                    ;; "      elsif old_wp then"
-                    ;; "        Bond.agent"
-                    ;; "      elsif defined?(IRB::InputCompletor::CompletionProc) then"
-                    ;; "        IRB::InputCompletor::CompletionProc"
-                    ;; "      end and puts completer.call(expr).compact"
-                    ;; "    end"
-                    ;; "  ensure"
-                    ;; "    Bond.agent.instance_variable_set('@weapon', old_wp) if old_wp "
-                    ;; "  end "
-                    ;; "}.call('%s', '%s')\n"
-
-                    )
+                  (format (concat iruby-impl-completion-expr "; nil;\n")
                    (iruby-escape-single-quoted expr)
                    (iruby-escape-single-quoted line))))
-            ;;; (warn "in completions section. using %s" completion-snippet)
              (process-send-string proc completion-snippet)
              (while (and (not (string-match iruby-prompt-pattern kept))
                          ;; how now :: ?
@@ -2651,8 +2587,6 @@ Then switch to the process buffer."
       ;; ensure:
       (set-process-filter proc previous-filter))
 
-    ;;; (warn "At end, kept: %S" kept)
-    ;;; (warn "At end, completions: %S" completions)
     (mapcar
      (lambda (str)
        (substring str prefix-offset))
@@ -2813,17 +2747,51 @@ This checks if the current line is a pry or ruby-debug prompt.")
           (throw 'type (cdr pair)))))))
 
 ;;;###autoload
-(defun iruby-console-auto ()
-  "Run the appropriate Ruby console command.
+(defun iruby-console-auto (&optional dir)
+  "Run the appropriate Ruby console command, or the default iRuby
+
 The command and the directory to run it from are detected
-automatically."
-  (interactive)
-  (let* ((dir (locate-dominating-file default-directory
-                                      #'iruby-console-match))
-         (type (iruby-console-match dir))
-         (fun (intern (format "iruby-console-%s" type))))
-    (unless type (error "No matching directory found"))
-    (funcall fun dir)))
+automatically.
+
+If an iRuby buffer exists for DIR, that buffer will be selected, else a
+new iRuby process will be created.
+
+If no matching project files can be found, this will run the default
+iRuby implementation, with `default-directory' set to DIR.
+
+If called interactively, the selected buffer's `default-directory' will
+be used as DIR unless called with a prefix argument. If called with a
+prefix argument, the user will be asked to select a directory for the
+console"
+  (interactive
+   (list (if current-prefix-arg
+             (let ((last-dir
+                    (when iruby-load-file-history
+                      (ignore-errors
+                        (file-name-directory
+                         (caar iruby-load-file-history)))))
+                   (choice
+                    (read-directory-name "Run iRuby console in directory: "
+                                         last-dir nil t)))
+               (cond
+                 ((zerop (length choice)) default-directory)
+                 (t choice)))
+           ;; else, just use default-directory
+           default-directory)))
+  (let* ((default-directory dir)
+         (use-dir
+          (locate-dominating-file default-directory
+                                  #'iruby-console-match))
+         (type (iruby-console-match use-dir))
+         (fun (when type (intern (format "iruby-console-%s" type)))))
+    (cond
+      ((null type)
+       (warn "iruby-console-auto: No console available for %s" dir)
+       (iruby))
+      ((fboundp fun)
+       (funcall fun use-dir))
+      (t
+       (error "Console function not bound: %S" fun)))))
 
 (defun iruby-console-rails-p ()
   (and (file-exists-p "Gemfile.lock")
@@ -2841,12 +2809,17 @@ automatically."
                                  (if (stringp predicate)
                                      (file-expand-wildcards predicate)
                                    (funcall predicate))))))
+   ;; FIXME do not err in this case, just run a normal `iruby'
+   ;; ... with warning
+   ;;
+   ;; this should not be where an assert is buried for known-console-dir-p etc
    (error "No matching directory for %s console found"
           (capitalize (symbol-name type)))))
 
 (defun iruby-console-run (command name)
+  ;; why using just the default directory?
   (run-iruby-or-pop-to-buffer command name
-                              (iruby-buffer-in-directory default-directory)))
+                              (iruby-directory-buffer default-directory)))
 
 ;;;###autoload
 (defun iruby-console-zeus (dir)
@@ -3023,16 +2996,24 @@ Gemfile, it should use the `gemspec' instruction."
 
 ;;;###autoload
 (defun iruby-console-default (dir)
-  "Run Pry, or bundle console, in DIR."
+  "Run Pry or the default iRuby as a bundler console in DIR"
   (interactive (list (iruby-console-read-directory 'default)))
-  (let ((default-directory (file-name-as-directory dir)))
+  (let* ((default-directory (file-name-as-directory dir))
+         (project (file-name-nondirectory
+                   (directory-file-name default-directory)))
+         (name (format "console (%s)" project))
+         (use-pry (iruby-file-contents-match "Gemfile" "[\"']pry[\"']"))
+         ;; FIXME could parse the Gemfile for more configuration
+         ;; features that may serve to determine what console cmd to
+         ;; run, and what ruby in which to run the console
+         ;; e.g w/ rbenv
+         (cmd (if use-pry (iruby-build-impl-cmd "pry")
+                (iruby-build-impl-cmd))))
+
     (unless (file-exists-p "Gemfile")
-      (error "The directory must contain a Gemfile"))
-    (cond
-     ((iruby-file-contents-match "Gemfile" "[\"']pry[\"']")
-      (iruby-console-run "bundle exec pry" "pry"))
-     (t
-      (iruby-console-run "bundle console" "bundle console")))))
+      (error "Unable to run a bundler console in a directory with no Gemfile"))
+    (iruby-console-run (append '("bundle" "exec")  cmd) name)))
+
 
 ;;;###autoload
 (defun iruby-file-contents-match (file regexp &optional match-group)
