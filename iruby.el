@@ -203,9 +203,11 @@ This function is used in the default value for the customization option,
 See also: `iruby-minor-mode-prefix', `iruby-app-name'"
   (when buffer (set-buffer buffer))
   (let ((impl (cond
-                (iruby-buffer (iruby-process-impl iruby-buffer))
                 ((eq major-mode 'iruby-mode)
-                 (iruby-process-impl (current-buffer))))))
+                 (iruby-process-impl (current-buffer)))
+                (iruby-buffer (iruby-process-impl iruby-buffer))
+                (iruby-default-ruby-buffer
+                 (iruby-process-impl iruby-default-ruby-buffer)))))
     (cond
       (impl (concat iruby-minor-mode-prefix iruby-app-name ":" impl))
       (t (concat iruby-minor-mode-prefix iruby-app-name)))))
@@ -1537,10 +1539,25 @@ See also: `iruby-get-last-output', `iruby-print-result'"
 
 
 (defun iruby-process-impl (whence)
-  (iruby-buffer-short-name
-   (etypecase whence
-     (process (iruby-process-buffer whence))
-     (buffer whence))))
+  ;; utility function, used in `iruby-minor-modeline-default-label'
+  (let* ((buffer
+          (etypecase whence
+            (process (iruby-process-buffer whence))
+            (buffer whence)
+            (string (or (cdr (cl-find whence iruby-process-buffers
+                               :key #'(lambda (elt) (buffer-name (cdr elt)))
+                               :test #'string=))
+                        (error "Found no buffer for name %S in iruby-process-buffers"
+                               whence))))))
+    (with-current-buffer buffer iruby-buffer-impl-name)))
+
+;;; ad-hoc test, assuming at least one iRuby process
+;; (iruby-process-impl (caar iruby-process-buffers))
+;;; similar - should return the same value as the previous
+;; (iruby-process-impl (cdar iruby-process-buffers))
+;;; this test assumes an iRuby process using ruby directly
+;; (iruby-process-impl "*ruby*")
+
 
 (defun iruby-buffer-short-name (whence)
   (cl-block self
