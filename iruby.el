@@ -194,24 +194,6 @@ printable delimiter"
   :group 'iruby-ui
   :type 'string)
 
-(defun iruby-minor-modeline-default-label (&optional buffer)
-  "Return a modeline string for `iruby-minor-mode'
-
-This function is used in the default value for the customization option,
-`iruby-minor-modeline-format'
-
-See also: `iruby-minor-mode-prefix', `iruby-app-name'"
-  (when buffer (set-buffer buffer))
-  (let ((impl (cond
-                ((eq major-mode 'iruby-mode)
-                 (iruby-process-impl (current-buffer)))
-                (iruby-buffer (iruby-process-impl iruby-buffer))
-                (iruby-default-ruby-buffer
-                 (iruby-process-impl iruby-default-ruby-buffer)))))
-    (cond
-      (impl (concat iruby-minor-mode-prefix iruby-app-name ":" impl))
-      (t (concat iruby-minor-mode-prefix iruby-app-name)))))
-
 
 ;; ensure that any local :eval blocks will be parsed for the modeline
 ;; in `iruby-minor-modeline-format'
@@ -1558,17 +1540,36 @@ See also: `iruby-get-last-output', `iruby-print-result'"
 ;;; this test assumes an iRuby process using ruby directly
 ;; (iruby-process-impl "*ruby*")
 
+(defun iruby-minor-modeline-default-label (&optional buffer)
+  "Return a modeline string for `iruby-minor-mode'
+
+This function is used in the default value for the customization option,
+`iruby-minor-modeline-format'
+
+See also: Customization for `iruby-minor-mode-prefix', `iruby-app-name'"
+  (when buffer (set-buffer buffer))
+  (let ((impl (cond
+                ((eq major-mode 'iruby-mode)
+                 (iruby-process-impl (current-buffer)))
+                (iruby-buffer (iruby-process-impl iruby-buffer))
+                (iruby-default-ruby-buffer
+                 (iruby-process-impl iruby-default-ruby-buffer)))))
+    (cond
+      (impl (concat iruby-minor-mode-prefix iruby-app-name ":" impl))
+      (t (concat iruby-minor-mode-prefix iruby-app-name)))))
+
 
 (defun iruby-buffer-short-name (whence)
+  ;; utility function for `iruby-read-process'
   (cl-block self
     (let ((name (etypecase whence
                   (string whence)
                   (buffer (cond
                             ((buffer-live-p whence)
                              (iruby-buffer-short-name (buffer-name whence)))
-                            (t (cl-return-from self nil))))
+                            (t (cl-return-from self "<buffer unavailable>"))))
                   (process (or (iruby-buffer-short-name (iruby-process-buffer whence))
-                               (cl-return-from self nil))))))
+                               (cl-return-from self "<buffer unavailable>"))))))
       (cond
         ((string-match "^\\*\\(.*\\)\\*\\(<.*>\\)?$" name)
          (concat (match-string-no-properties 1 name)
@@ -1583,6 +1584,8 @@ See also: `iruby-get-last-output', `iruby-print-result'"
 
 ;; (iruby-buffer-short-name "*ruby*<1>")
 ;; => "ruby<1>"
+
+;; (iruby-buffer-short-name (let ((b (get-buffer-create "*test*"))) (kill-buffer b) b))
 
 ;;
 ;; utility forms (iruby-proc)
