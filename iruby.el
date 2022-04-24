@@ -935,7 +935,10 @@ The following commands are available:
  (defvar iruby-buffer nil
    "When non-nil, the iruby process buffer to use for this buffer.
 
-If nil, `iruby-default-ruby-buffer' may be used.
+If nil and `iruby-use-project-directories' is non-nil, then the first
+Ruby buffer for the current project should be used.
+
+Else, `iruby-default-ruby-buffer' should be used.
 
 See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
 
@@ -1077,25 +1080,20 @@ This function provides a utility for `iruby-previous-prompt'"
          (iruby-previous-nonblank-output start t))
         (t (goto-char end))))))
 
-(defun iruby-next-nonblank-output (point &optional non-current)
+(defun iruby-forward-output (point &optional use-current)
   (interactive "d")
   (let ((at point)
         start end
         match)
     (goto-char at)
-    (when (setq match (text-property-search-forward 'field 'output t non-current))
+    (when (setq match (text-property-search-forward 'field 'output t
+                                                    (not use-current)))
       (goto-char at) ;; reset after the property search moved point
       (setq start (prop-match-beginning match)
             end (prop-match-end match))
       (cond
         ((string-whitespace-p (buffer-substring-no-properties start end))
-         (iruby-next-nonblank-output start t))
-        ;; NB this does not differentiate between prompt output and
-        ;; other output
-        ((= start at) ;; ?
-         (iruby-next-nonblank-output end)
-         ;; (goto-char end)
-         )
+         (iruby-forward-output end))
         (t
          (goto-char start))))))
 
@@ -1104,60 +1102,49 @@ This function provides a utility for `iruby-previous-prompt'"
 previous prompt preceding POINT - similarly, the beginning of the
 input area.
 
-If POINT is not within an input area, point will be moved into the
-previous input area, immediately after the end of the previous prompt.
+If POINT is within a prompt, point will be moved to the end of the
+prompt.
 
-This function assumes that the subprocess' prompt is configured to not
-display additional printable text during continued input, such as with
-the --inf-ruby-mode prompt under irb.
-
-See also: `iruby-input-end', `iruby-input-at-point'"
+If POINT is not within an output area, point will be moved to the
+beginning of the previous input area."
+  ;; NB the iruby-prompt text property will have been added in
+  ;; `iruby-preoutput-filter',  assuming that the Ruby subprocess'
+  ;; prompt matches the regexp stored in `iruby-prompt-pattern'
   (interactive "d")
   (let ((at point)
         (start point)
         match)
     (goto-char at)
     (cond
-      ((or (zerop at) (= at (point-min)))
-       ;; start of buffer
-       ;; - go forward to end of prompt, no further processing
-       (when (setq match (text-property-search-forward 'field 'output t))
+      ((get-text-property at 'iruby-prompt)
+       ;; generally at an iRuby prompt
+       ;; - go forward to end of prompt
+       ;;
+       ;; NB not-current => t  might be an implicit default with the
+       ;; text-property-search functions, thus it may need an explicit
+       ;; nil arg to allow for including any current property in the
+       ;; search
+       (when (setq match (text-property-search-forward 'iruby-prompt t 'eq nil))
          (goto-char (prop-match-end match))))
-      ((= 1 (line-number-at-pos at))
-       (case (get-text-property at 'field)
-         (output ;; assumption: point is at a prompt (first line of buffer)
-          (when (setq match (text-property-search-forward 'field nil 'eq t))
-            (goto-char (prop-match-beginning match))))
-         (t ;; assumption: point is in input (first line of buffer)
-          (when (setq match (text-property-search-backward 'field nil 'eq t))
-            (goto-char (prop-match-beginning match))))))
       (t
-       (let ((field (get-text-property at 'field)))
-         ;; (when (eq field 'output)
-         ;;   ;; scan backwards over output
-         ;;   (when (setq match (text-property-search-backward 'field 'output 'eq))
-         ;;     (goto-char (setq start (prop-match-beginning match)))))
-
-         (when (setq match (text-property-search-backward 'field nil 'eq))
-           ;; scan to the start of the nearest previous input
-           (goto-char (setq start (prop-match-beginning match))))
-
-         ;; scan backwards over continued input prompts,
-         ;; assuming the subprocess prompt is configured to be an empty string
-         (iruby-previous-nonblank-output start)
-         (point)
-         )))))
+       ;; point is at an input field, or in output from the ruby process
+       ;; - move to the end of the previous prompt
+       ;; - if no previous prompt is found, return point at the end of
+       ;;   search
+       (cond
+         ((setq match (text-property-search-backward 'iruby-prompt t 'eq t))
+          (goto-char (prop-match-end match)))
+         (t (point)))))))
 
 
 (defun iruby-input-end (point)
   (interactive "d")
-  ;; FIXME does not actually move point past the current input,
-  ;; except with new input not yet reprinted by comint
-  ;;
-  ;; nonetheless useful for `iruby-input-at-point'
   (iruby-input-start point)
-  (iruby-next-nonblank-output (point))
+  (iruby-forward-output (point))
   (let ((match (text-property-search-backward 'field 'boundary 'eq)))
+    ;; move point to the last boundry field before the output area.
+    ;;
+    ;; that should represent the lexical end of the previous input area
     (when match (goto-char (prop-match-beginning match))))
   (point))
 
@@ -1175,9 +1162,6 @@ See also: `iruby-input-end', `iruby-input-at-point'"
                (setq end (previous-single-property-change end 'iruby-prompt)))
       (goto-char end)
       (setq at end))
-    ;;; this would cause it to behave strangely when point begins on an
-    ;;; input field
-    ;; (setq end (next-single-property-change at 'iruby-prompt))
     (when end
       (goto-char end)
       ;; move to an input field
@@ -1214,25 +1198,38 @@ See also: `iruby-input-end', `iruby-input-at-point'"
       )))
 
 
-
 (defun iruby-input-at-point (point)
-  "Retrieve any input at point
+  "Retrieve any input at or previous to point
+
+When called interactively, the full text of any input at or previous to
+point will be displayed in the minibuffer.
 
 See also: `iruby-input-start', `iruby-input-end',
 `iruby-get-old-input'"
+  ;; NB This has been tested with an --inf-ruby-mode prompt for irb
+  ;;
+  ;; - needs testing with a non-empty 2ary prompt, e.g "> " for continued input
   (interactive "d")
   (save-excursion
     (save-restriction
       (let (start match end expr)
-        (iruby-previous-prompt point)
+        (cond
+          ;; move point to the first input area after previous prompt
+          ((get-text-property point 'iruby-prompt)
+           (iruby-input-start point))
+          (t
+           (iruby-previous-prompt point)))
         (setq start (point))
         (cond
           ((and (setq match (text-property-search-forward 'iruby-prompt nil))
+                ;; move to beginning of next non-prompt area, i.e input field
                 (goto-char (prop-match-beginning match))
+                ;; compute bounds of output - this "Just works" ...
                 (setq match (text-property-search-backward 'field 'output)))
            (setq end (prop-match-end match)))
           (t (setq end start)))
         (setq expr (string-trim (buffer-substring-no-properties start end)))
+        ;; interactive form is mostly for debug ..
         (when (interactive-p) (message "At point: %S" expr))
         expr))))
 
@@ -1283,9 +1280,15 @@ See also `iruby-send-or-stage-input'"
   "Send or stage input in an `iruby-mode' buffer.
 
 If point is within a previous input area, that input will be copied to
-the most recent prompt, to allow editing before send. Any pending input
-at the projmpt will be stored and presented after the next input
+the most recent input prompt, to allow editing before send. Any pending
+input at the prompt will be stored and presented after the next input
 prompt, in the buffer.
+
+If point is within a previous output area, this should serve to capture
+the input that was evaluated when producing the output from the Ruby
+process. The initial input should be transposed to the current input
+prompt - with recovery for any pending input - similar to the previous
+case.
 
 Otherwise, any input at the prompt will be sent to the iRuby process."
   ;;
@@ -1309,6 +1312,22 @@ Otherwise, any input at the prompt will be sent to the iRuby process."
        ;; expressions on the current input line
        (comint-send-input))
       (t
+       ;; This might generally be similar to
+       ;;  `comint-stored-incomplete-input' (var) and
+       ;;  `comint-restore-input' (func)
+       ;; Those forms might be applied for in-place history navigation,
+       ;; e.g for scrolling through earlier input with point at an input
+       ;; field in an iRuby comint buffer.
+       ;;
+       ;; The forms implemented here are designed to be applied when
+       ;; moving point across earlier input items in an iRuby comint
+       ;; buffer. Considering the per-line approach to history recording
+       ;; in comint, this provides at least one way to edit and reuse
+       ;; any earlier multi-line input.
+       ;;
+       ;; This would be usable without reimplementing the input and
+       ;; history-recording forms in comint, such as to perhaps resemble
+       ;; those developed in recent versions of IRB.
        (iruby-stage-old-input)))))
 
 
