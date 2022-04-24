@@ -985,7 +985,7 @@ Commands:
 `RET' before the end of the process' output copies the sexp ending at point
     to the end of the process' output, and sends it.
 `DEL' converts tabs to spaces as it moves back.
-`TAB' completes the input at point. IRB, Pry and Bond completion is supported.
+`TAB' completes the input at point. IRB and Pry completion are supported.
 `C-M-q' does `TAB' on each line starting within following expression.
 Paragraphs are separated only by blank lines.  # start comments.
 If you accidentally suspend your process, use \\[comint-continue-subjob]
@@ -2013,7 +2013,7 @@ will be seleted by `iruby-read-process-interactive'"
           (when multibyte-p
             ;; `enable-multibyte-characters' cannot be set with 'set'
             (set-buffer-multibyte multibyte-p))
-          (iruby-initialize-impl-bindings imp syntax))
+          (iruby-initialize-impl-bindings impl syntax))
         (setf (car cached-data) proc)))))
 
 
@@ -2062,7 +2062,7 @@ used"
 (defun run-iruby-or-pop-to-buffer (command &optional name new)
   ;; NB used in
   ;; - `run-iruby'
-  ;; - `iruby-console-run'
+  ;; - `iruby-console-activate'
   ;;
   ;; FIXME fold this into `run-iruby'
   (let ((buffer (unless new (iruby-get-prevailing-buffer))))
@@ -2719,13 +2719,13 @@ keymaps to bind `iruby-switch-from-compilation' to `С-x C-q'."
        'iruby-switch-from-compilation)))
 
 (defvar iruby-console-patterns-alist
-  '((".zeus.sock" . zeus)
+  '(("Gemfile" . default)
+    ("*.gemspec" . gem)
+    (".zeus.sock" . zeus)
     (iruby-console-rails-p . rails)
     (iruby-console-hanami-p . hanami)
     (iruby-console-script-p . script)
-    ("*.gemspec" . gem)
-    (iruby-console-racksh-p . racksh)
-    ("Gemfile" . default))
+    (iruby-console-racksh-p . racksh))
   "Mapping from predicates (wildcard patterns or functions) to type symbols.
 `iruby-console-auto' walks up from the current directory until
 one of the predicates matches, then calls `iruby-console-TYPE',
@@ -2747,7 +2747,7 @@ This checks if the current line is a pry or ruby-debug prompt.")
           (throw 'type (cdr pair)))))))
 
 ;;;###autoload
-(defun iruby-console-auto (&optional dir)
+(defun iruby-console-auto (&optional dir new)
   "Run the appropriate Ruby console command, or the default iRuby
 
 The command and the directory to run it from are detected
@@ -2765,31 +2765,30 @@ prefix argument, the user will be asked to select a directory for the
 console"
   (interactive
    (list (if current-prefix-arg
-             (let ((last-dir
-                    (when iruby-load-file-history
-                      (ignore-errors
-                        (file-name-directory
-                         (caar iruby-load-file-history)))))
-                   (choice
+             (let ((choice
                     (read-directory-name "Run iRuby console in directory: "
-                                         last-dir nil t)))
+                                         nil nil t)))
                (cond
                  ((zerop (length choice)) default-directory)
                  (t choice)))
            ;; else, just use default-directory
-           default-directory)))
+           default-directory)
+         current-prefix-arg))
   (let* ((default-directory dir)
          (use-dir
-          (locate-dominating-file default-directory
-                                  #'iruby-console-match))
-         (type (iruby-console-match use-dir))
+          ;; FIXME not exactly working out
+          (locate-dominating-file default-directory #'iruby-console-match))
+         (type (progn (warn "USING DIR %S" use-dir)
+                      (let ((it (iruby-console-match use-dir)))
+                        (warn "MATCHED FOR %S" it)
+                        it)))
          (fun (when type (intern (format "iruby-console-%s" type)))))
     (cond
       ((null type)
        (warn "iruby-console-auto: No console available for %s" dir)
        (iruby))
       ((fboundp fun)
-       (funcall fun use-dir))
+       (funcall fun use-dir new))
       (t
        (error "Console function not bound: %S" fun)))))
 
@@ -2816,27 +2815,47 @@ console"
    (error "No matching directory for %s console found"
           (capitalize (symbol-name type)))))
 
-(defun iruby-console-run (command name)
+(defun iruby-find-console-buffer (dir name)
+  (let* ((dir-attrs (file-attributes dir 'integer))
+         (dir-device (file-attribute-device-number dir-attrs))
+         (dir-ino (file-attribute-inode-number dir-attrs)))
+    (cl-block search
+      (cl-dolist (elt iruby-process-buffers)
+        (let ((buff (cdr elt)))
+          (when (buffer-live-p buff)
+            (with-current-buffer buff
+              ;; FIXME stop using the buffer impl name as a project/console name
+              (and (equal name iruby-buffer-impl-name)
+                   (let* ((o-attrs (file-attributes default-directory 'integer))
+                          (o-device (file-attribute-device-number o-attrs))
+                          (o-ino (file-attribute-inode-number o-attrs)))
+                     (= o-device dir-device)
+                     (= o-ino dir-ino))
+                   (cl-return-from search buff)))))))))
+
+(defun iruby-console-activate (command name &optional new)
   ;; why using just the default directory?
-  (run-iruby-or-pop-to-buffer command name
-                              (iruby-directory-buffer default-directory)))
+  (let ((exists (unless new
+                  (iruby-find-console-buffer name default-directory))))
+    (unless exists
+      (run-iruby-or-pop-to-buffer command name new))))
 
 ;;;###autoload
-(defun iruby-console-zeus (dir)
+(defun iruby-console-zeus (dir &optional new)
   "Run Rails console in DIR using Zeus."
   (interactive (list (iruby-console-read-directory 'zeus)))
   (let ((default-directory (file-name-as-directory dir))
         (exec-prefix (if (executable-find "zeus") "" "bundle exec ")))
-    (iruby-console-run (concat exec-prefix "zeus console") "zeus")))
+    (iruby-console-activate (concat exec-prefix "zeus console") "zeus" new)))
 
 ;;;###autoload
-(defun iruby-console-rails (dir)
+(defun iruby-console-rails (dir &optional new)
   "Run Rails console in DIR."
   (interactive (list (iruby-console-read-directory 'rails)))
   (let* ((default-directory (file-name-as-directory dir))
          (env (iruby-console-rails-env))
          (with-bundler (file-exists-p "Gemfile")))
-    (iruby-console-run
+    (iruby-console-activate
      (concat (when with-bundler "bundle exec ")
              "rails console -e "
              env
@@ -2844,7 +2863,7 @@ console"
              ;; https://github.com/rails/rails/pull/29010
              (when (irb-needs-nomultiline-p)
                " -- --nomultiline"))
-     "rails")))
+     "rails" new)))
 
 (defun iruby-console-rails-env ()
   (if (stringp iruby-console-environment)
@@ -2865,7 +2884,7 @@ console"
   (and (file-exists-p "config.ru")
        (iruby-file-contents-match "config.ru" "\\_<run Hanami.app\\_>")))
 
-(defun iruby-console-hanami (dir)
+(defun iruby-console-hanami (dir &optional new)
   "Run Hanami console in DIR."
   (interactive (list (iruby-console-read-directory 'hanami)))
   (let* ((default-directory (file-name-as-directory dir))
@@ -2873,10 +2892,10 @@ console"
          (with-bundler (file-exists-p "Gemfile"))
          (process-environment (cons (format "HANAMI_ENV=%s" env)
                                     process-environment)))
-    (iruby-console-run
+    (iruby-console-activate
      (concat (when with-bundler "bundle exec ")
              "hanami console")
-     "hanami")))
+     "hanami" new)))
 
 (defun iruby-console-hanami-env ()
   (if (stringp iruby-console-environment)
@@ -2888,56 +2907,45 @@ console"
                        nil nil (car (member "development" envs))))))
 
 ;;;###autoload
-(defun iruby-console-gem (dir)
+(defun iruby-console-gem (dir &optional new)
   "Run IRB console for the gem in DIR.
 The main module should be loaded automatically.  If DIR contains a
 Gemfile, it should use the `gemspec' instruction."
-  (interactive (list (iruby-console-read-directory 'gem)))
+  (interactive (list (iruby-console-read-directory 'gem)
+                     current-prefix-arg))
   (let* ((default-directory (file-name-as-directory dir))
-         (gemspec (car (file-expand-wildcards "*.gemspec")))
-         (base-command
-          (if (file-exists-p "Gemfile")
-              (if (iruby-file-contents-match gemspec "\\$LOAD_PATH")
-                  "bundle exec irb"
-                "bundle exec irb -I lib")
-            "irb -I lib"))
-         (name (iruby-file-contents-match
-                gemspec "\\.name[ \t]*=[ \t]*['\"]\\([^'\"]+\\)['\"]" 1))
-         args files)
-    (unless (file-exists-p "lib")
-      (error "The directory must contain a 'lib' subdirectory"))
-    (let ((feature (and name (replace-regexp-in-string "-" "/" name))))
-      (if (and feature (file-exists-p (concat "lib/" feature ".rb")))
-          ;; There exists the main file corresponding to the gem name,
-          ;; let's require it.
-          (setq args (concat " -r " feature))
-        ;; Let's require all non-directory files under lib, instead.
-        (dolist (item (directory-files "lib"))
-          (when (and (not (file-directory-p (format "lib/%s" item)))
-                     (string-match-p "\\.rb\\'" item))
-            (push item files)))
-        (setq args
-              (mapconcat
-               (lambda (file)
-                 (concat " -r " (file-name-sans-extension file)))
-               files
-               ""))))
-    (when (irb-needs-nomultiline-p)
-      (setq base-command (concat base-command " --nomultiline")))
-    (iruby-console-run
-     (concat base-command args
-             " --prompt default --noreadline -r irb/completion")
-     "gem")))
+         ;; NB picking the first gemspec file here, if mutiple are available
+         (gemspec
+          (car
+           (cl-remove "\\.#"
+                      (cl-remove-if #'backup-file-name-p
+                                    (cl-remove-if #'auto-save-file-name-p
+                                                  (file-expand-wildcards "*.gemspec"))))))
+         (impl-cmd (iruby-build-impl-cmd))
+         (name  (iruby-file-contents-match
+                 gemspec "\\.name[ \t]*=[ \t]*['\"]\\([^'\"]+\\)['\"]" 1))
+         (args (when (file-directory-p "lib")
+                 (list "-I" "lib")))
+         files)
+
+    (setq name
+          (cond
+            (name (string-trim name))
+            (t (file-name-sans-extension gemspec))))
+
+    (iruby-console-activate (append impl-cmd args)
+                       (format "gem(%s)" name)
+                       new)))
 
 (defun iruby-console-racksh-p ()
   (and (file-exists-p "Gemfile.lock")
        (iruby-file-contents-match "Gemfile.lock" "^ +racksh ")))
 
-(defun iruby-console-racksh (dir)
+(defun iruby-console-racksh (dir &optional new)
   "Run racksh in DIR."
   (interactive (list (iruby-console-read-directory 'racksh)))
   (let ((default-directory (file-name-as-directory dir)))
-    (iruby-console-run "bundle exec racksh" "racksh")))
+    (iruby-console-activate "bundle exec racksh" "racksh" new)))
 
 (defun iruby-in-ruby-compilation-modes (mode)
   "Check if MODE is a Ruby compilation mode."
@@ -2982,20 +2990,22 @@ Gemfile, it should use the `gemspec' instruction."
         (file-exists-p "console.rb"))))
 
 ;;;###autoload
-(defun iruby-console-script (dir)
+(defun iruby-console-script (dir &optional new)
   "Run custom bin/console, console or console.rb in DIR."
+  ;; FIXME the console cmd may need additional configuration for use
+  ;; under iruby
   (interactive (list (iruby-console-read-directory 'script)))
   (let ((default-directory (file-name-as-directory dir)))
     (cond
      ((file-exists-p "bin/console")
-      (iruby-console-run "bundle exec bin/console" "bin/console"))
+      (iruby-console-activate "bundle exec bin/console" "bin/console" new))
      ((file-exists-p "console.rb")
-      (iruby-console-run "bundle exec ruby console.rb" "console.rb"))
+      (iruby-console-activate "bundle exec ruby console.rb" "console.rb" new))
      ((file-exists-p "console")
-      (iruby-console-run "bundle exec console" "console.rb")))))
+      (iruby-console-activate "bundle exec console" "console.rb" new)))))
 
 ;;;###autoload
-(defun iruby-console-default (dir)
+(defun iruby-console-default (dir &optional new)
   "Run Pry or the default iRuby as a bundler console in DIR"
   (interactive (list (iruby-console-read-directory 'default)))
   (let* ((default-directory (file-name-as-directory dir))
@@ -3012,7 +3022,8 @@ Gemfile, it should use the `gemspec' instruction."
 
     (unless (file-exists-p "Gemfile")
       (error "Unable to run a bundler console in a directory with no Gemfile"))
-    (iruby-console-run (append '("bundle" "exec")  cmd) name)))
+    (iruby-console-activate (append '("bundle" "exec")  cmd)
+                       name new)))
 
 
 ;;;###autoload
