@@ -1469,15 +1469,20 @@ the `command' value"
 This function will display a warning after any change of state other
 than exit, hangup, or finished for a ruby subprocess initialized with
 `run-iruby-new'"
-  (let ((status (process-status process)))
+  (let ((status (process-status process))
+        (%state (or (ignore-errors (string-trim-right state))
+                    state)))
     ;; NB the second arg delivered to the process sentinel
     ;; will normally be an informative string.
     ;;
     ;; The "hangup" state may generally indicate a normal exit
+    ;;
+    ;; FIXME the 'signal' status with a "killed\n" state may indicate a
+    ;; normal exit when restarting jruby
     (unless (or (memq status '(exit finished))
-                (and (stringp state) (string= state "hangup")))
+                (equal %state "hangup"))
       (warn "iRuby process %s state changed (%S): %S"
-            process status state))))
+            process status %state))))
 
 (defun iruby-get-last-output (&optional proc)
   "Return the last output from the ruby process PROC as a string.
