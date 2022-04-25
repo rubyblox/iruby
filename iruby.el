@@ -2692,6 +2692,26 @@ passing it the found directory.")
   "Pattern found when a breakpoint is triggered in a compilation session.
 This checks if the current line is a pry or ruby-debug prompt.")
 
+
+(defun iruby-expand-files (path &optional full)
+  "expand any glob patterns in PATH, returning a list of file pathnames
+
+PATH should contain a literal pathname expression or a pathname
+expression including glob patterns.
+
+If FULL is non-nil, a list of absolute pathnames will be returned. By
+default, pathnames will be returned as relative to PATH.
+
+This function will ensure that any autosave files or symbolic links to
+noneixstent files will not be present in the returned list of
+pathnames.
+
+The syntax for PATH would be that used in `file-expand-wildcards'"
+  (cl-remove-if 'auto-save-file-name-p
+                (cl-remove-if-not 'file-exists-p
+                                  (file-expand-wildcards path))))
+
+
 (defun iruby-console-match (dir)
   "Find matching console command for DIR, if any."
   (catch 'type
@@ -2699,7 +2719,7 @@ This checks if the current line is a pry or ruby-debug prompt.")
       (let ((default-directory dir)
             (pred (car pair)))
         (when (if (stringp pred)
-                  (file-expand-wildcards pred)
+                  (iruby-expand-files pred)
                 (funcall pred))
           (throw 'type (cdr pair)))))))
 
@@ -2763,7 +2783,7 @@ console"
                              (lambda (dir)
                                (let ((default-directory dir))
                                  (if (stringp predicate)
-                                     (file-expand-wildcards predicate)
+                                     (iruby-expand-files predicate)
                                    (funcall predicate))))))
    ;; FIXME do not err in this case, just run a normal `iruby'
    ;; ... with warning
@@ -2838,7 +2858,7 @@ console"
                        nil nil (car (member "development" envs))))))
 
 (defun iruby-console-rails-envs ()
-  (let ((files (file-expand-wildcards "config/environments/*.rb")))
+  (let ((files (iruby-expand-files "config/environments/*.rb")))
     (if (null files)
         (error "No files in %s" (expand-file-name "config/environments/"))
       (mapcar #'file-name-base files))))
@@ -2878,8 +2898,7 @@ Gemfile, it should use the `gemspec' instruction."
                      current-prefix-arg))
   (let* ((default-directory (file-name-as-directory dir))
          ;; NB picking the first gemspec file here, if mutiple are available
-         (gemspec
-          (car (cl-remove "\\.#" (file-expand-wildcards "*.gemspec"))))
+         (gemspec (car (iruby-expand-files "*.gemspec")))
          (name  (iruby-file-contents-match
                  gemspec "\\.name[ \t]*=[ \t]*['\"]\\([^'\"]+\\)['\"]" 1))
          (args (when (file-directory-p "lib")
