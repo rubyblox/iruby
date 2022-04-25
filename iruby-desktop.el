@@ -294,3 +294,4 @@ See also: `desktop-save', `desktop-read'"
 ;; (require 'iruby)
 ;; (iruby-ensure-desktop-support)
 
+(provide 'iruby-desktop)

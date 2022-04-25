@@ -3014,7 +3014,21 @@ Gemfile, it should use the `gemspec' instruction."
     (ruby-smie--backward-token)))
 
 
+(defun iruby-load-desktop-support ()
+  (interactive)
+  (require 'iruby-desktop))
 
+(defmacro iruby-preload-desktop-support ()
+  (interactive)
+  (with-symbols-iruby (found)
+    `(let ((,found (assq 'desktop after-load-alist)))
+       (cond
+         (,found (cl-pushnew 'iruby-load-desktop-support
+                             (cdr ,found)  :test #'eq))
+         (t (add-to-list 'after-load-alist
+                         '(desktop iruby-load-desktop-support)))))))
+
+(iruby-preload-desktop-support)
 
 ;;;###autoload (dolist (mode (iruby-source-modes)) (add-hook (intern (format "%s-hook" mode)) 'iruby-minor-mode))
 
