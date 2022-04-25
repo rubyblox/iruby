@@ -1420,7 +1420,14 @@ the `command' value"
                    (t (setq cmd (iruby-split-shell-string cmd))))
                  (list cmd current-prefix-arg
                        (iruby-impl-name cmd))))
-  (run-iruby-or-pop-to-buffer impl name new))
+    (let ((buffer (unless new (iruby-get-prevailing-buffer))))
+    (when (stringp impl)
+      (setq impl (iruby-split-shell-string impl)))
+    (when (or new (not (and buffer
+                          (buffer-live-p buffer)
+                          (iruby-process-running-p buffer))))
+      (setq buffer (run-iruby-new impl name)))
+    (iruby-switch-to-process (iruby-buffer-process buffer))))
 
 (defun iruby-process-sentinel (process state)
   "Process sentinel installed by `run-iruby-new'
@@ -2027,21 +2034,6 @@ used"
     (iruby-switch-to-process (get-buffer-process buffer))
     ))
 
-
-(defun run-iruby-or-pop-to-buffer (impl &optional name new)
-  ;; NB used in
-  ;; - `run-iruby'
-  ;; - `iruby-console-activate'
-  ;;
-  ;; FIXME fold this into `run-iruby'
-  (let ((buffer (unless new (iruby-get-prevailing-buffer))))
-    (when (stringp impl)
-      (setq impl (iruby-split-shell-string impl)))
-    (when (or new (not (and buffer
-                          (buffer-live-p buffer)
-                          (iruby-process-running-p buffer))))
-      (setq buffer (run-iruby-new impl name)))
-    (iruby-switch-to-process (iruby-buffer-process buffer)))
 
 (defun iruby-proc (&optional noerr)
   "Return the inferior Ruby process for the current buffer or project.
@@ -2801,7 +2793,7 @@ console"
 (defun iruby-console-activate (impl name &optional new)
   (let ((exists (unless new
                   (iruby-find-console-buffer name default-directory))))
-    (run-iruby-or-pop-to-buffer impl name new)))
+    (run-iruby impl name new)))
 
 (defun iruby-console-wrap (cmd name &optional new)
   (when (stringp cmd)
