@@ -77,13 +77,17 @@
 ;;
 
 (cl-defgeneric iruby-impl-name (datum)
+  (:method((datum string))
+    "Return the nondirectory name of DATUM as an implementation name"
+    (file-name-nondirectory datum))
   (:method ((datum cons))
     "Determine an implementation name from the shell command list in DATUM"
     (let ((bin (car datum)))
       (cl-typecase bin
-        (string (file-name-nondirectory bin))
+        (string (iruby-impl-name bin))
         ;; fallback - no value substitution here
         (t (prin1-to-string bin))))))
+
 
 (cl-defgeneric iruby-impl-bin (datum))
 (cl-defgeneric iruby-impl-requires (datum))
@@ -181,11 +185,6 @@ See also: `iruby-get-default-interactive-binding'"
 ;; (iruby-get-language-impl "jruby")
 ;; (iruby-get-language-impl "thirdth" t)
 ;; (iruby-get-language-impl (iruby-get-language-impl "jruby"))
-
-(cl-defmethod iruby-impl-name ((datum string))
-  (iruby-impl-name (iruby-get-language-impl datum)))
-
-;; (iruby-impl-name "ruby")
 
 (cl-defmethod iruby-impl-bin ((datum iruby-impl))
   ;; NB applicable for any iruby-impl

@@ -880,9 +880,9 @@ See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
 (make-variable-buffer-local
  (defvar iruby-buffer-command nil "The command used to run Ruby shell"))
 
-(defvar iruby-buffer-impl-name nil
-  "Implementation name for a Ruby process buffer")
-(make-variable-buffer-local 'iruby-buffer-impl-name)
+(defvar iruby-buffer-impl nil
+  "Implementation for a Ruby process buffer")
+(make-variable-buffer-local 'iruby-buffer-impl)
 
 (defun iruby-initialize-impl-bindings (&optional impl syntax)
   ;; shared forms for `iruby-mode' (e.g under `run-iruby-new')
@@ -891,8 +891,11 @@ See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
   ;; This is implemented here rather than in iruby-mode, as iruby-mode
   ;; does not presently receive an implementation name
   (let ((proc (get-buffer-process (current-buffer)))
-        (use-impl (or impl iruby-buffer-impl-name))
+        (use-impl (or impl iruby-buffer-impl))
         (use-syntax (or syntax iruby-ruby-syntax iruby-default-ruby-syntax)))
+    (when (stringp use-impl)
+      (setq use-impl (or (ignore-errors (iruby-get-interactive-impl use-impl))
+                         use-impl)))
     (cond
       (proc
        (setq iruby-buffer-command (process-command proc))
@@ -902,11 +905,11 @@ See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
        (cond
          (use-impl
           (setq
-           iruby-buffer-impl-name use-impl
-           iruby-impl-binding-expr (ignore-errors
-                                     (iruby-get-impl-binding-expr use-impl))
-           iruby-impl-completion-expr (ignore-errors
-                                        (iruby-get-impl-completion-expr use-impl))))
+           iruby-buffer-impl use-impl
+           iruby-impl-binding-expr (unless (stringp use-impl)
+                                     (iruby:interactive-binding-expr use-impl))
+           iruby-impl-completion-expr (unless (stringp use-impl)
+                                        (iruby:interactive-completion-expr use-impl))))
          (t (warn "Unknown Ruby implementation for %s (nil)" (current-buffer)))))
       (t (warn "Unable to initialize buffer %s for iRuby (no process)"
                (current-buffer))))))
@@ -1428,15 +1431,10 @@ than exit, hangup, or finished for a ruby subprocess initialized with
   (let ((status (process-status process))
         (%state (or (ignore-errors (string-trim-right state))
                     state)))
-    ;; NB the second arg delivered to the process sentinel
-    ;; will normally be an informative string.
-    ;;
-    ;; The "hangup" state may generally indicate a normal exit
-    ;;
-    ;; FIXME the 'signal' status with a "killed\n" state may indicate a
-    ;; normal exit when restarting jruby
+    ;; parse out some normal exit states, before warn
     (unless (or (memq status '(exit finished))
-                (equal %state "hangup"))
+                (equal %state "hangup")
+                (equal %state "killed"))
       (warn "iRuby process %s state changed (%S): %S"
             process status %state))))
 
@@ -1513,7 +1511,7 @@ See also: `iruby-get-last-output', `iruby-print-result'"
                                :test #'string=))
                         (error "Found no buffer for name %S in iruby-process-buffers"
                                whence))))))
-    (with-current-buffer buffer iruby-buffer-impl-name)))
+    (with-current-buffer buffer iruby-buffer-impl)))
 
 ;;; ad-hoc test, assuming at least one iRuby process
 ;; (iruby-process-impl (caar iruby-process-buffers))
@@ -1949,7 +1947,7 @@ will be seleted by `iruby-read-process-interactive'"
         (cached-data (assq process iruby-process-buffers)))
     (with-current-buffer buff
       (let ((cmd (process-command process))
-            (impl iruby-buffer-impl-name)
+            (impl iruby-buffer-impl)
             (syntax iruby-ruby-syntax)
             (multibyte-p enable-multibyte-characters)
             (locals (cl-remove 'enable-multibyte-characters
@@ -1994,7 +1992,13 @@ used"
             (iruby-interactive-binding (iruby:parse-cmd command))
             (string (iruby-split-shell-string command))
             (cons command)))
-         (name (or name (file-name-nondirectory (car commandlist))))
+         (name (or name (cl-typecase command
+                          ((or iruby-interactive-binding cons)
+                           (iruby-impl-name command))
+                          (t (iruby-impl-name commandlist)))))
+         (impl (cl-typecase command
+                 (iruby-interactive-binding command)
+                 (t commandlist)))
          (buffer-name (generate-new-buffer-name (format "*%s*" name)))
          ;; NB this should pick up any current major-mode for computing
          ;; the syntax to use in the iruby buffer
@@ -2013,7 +2017,10 @@ used"
 
     (set-buffer buffer)
     (iruby-mode) ;; may reset any buffer-local variables
-    (iruby-initialize-impl-bindings name syntax)
+    (iruby-initialize-impl-bindings (cl-typecase command
+                                      (iruby-interactive-binding command)
+                                      (t name))
+                                    syntax)
     (iruby-remember-ruby-buffer buffer)
 
     ;; return a buffer object
@@ -2027,21 +2034,14 @@ used"
   ;; - `iruby-console-activate'
   ;;
   ;; FIXME fold this into `run-iruby'
-  (let ((buffer (unless new (iruby-get-prevailing-buffer)))) ;; ???
+  (let ((buffer (unless new (iruby-get-prevailing-buffer))))
     (when (stringp impl)
       (setq impl (iruby-split-shell-string impl)))
     (when (or new (not (and buffer
                           (buffer-live-p buffer)
                           (iruby-process-running-p buffer))))
       (setq buffer (run-iruby-new impl name)))
-    (iruby-switch-to-process (iruby-buffer-process buffer))
-    (let ((command (iruby:parse-cmd impl)))
-      (unless (and (string= iruby-buffer-impl-name name)
-                   (equal iruby-buffer-command command))
-        (warn (concat "Found an iRuby buffer, but it was created using "
-                      "a different command for %s. Previous: %S")
-              iruby-buffer-impl-name
-              iruby-buffer-command)))))
+    (iruby-switch-to-process (iruby-buffer-process buffer)))
 
 (defun iruby-proc (&optional noerr)
   "Return the inferior Ruby process for the current buffer or project.
@@ -2605,7 +2605,7 @@ Returns the selected completion or nil."
                  (completion-table-dynamic #'iruby-completions))))))
     (t
      (iruby-warn-once "Completion not configured for implementation %s"
-                      iruby-buffer-impl-name))))
+                      iruby-buffer-impl))))
 
 
 
@@ -2790,7 +2790,7 @@ console"
           (when (buffer-live-p buff)
             (with-current-buffer buff
               ;; FIXME stop using the buffer impl name as a project/console name
-              (and (equal name iruby-buffer-impl-name)
+              (and (equal name (iruby-impl-name iruby-buffer-impl))
                    (let* ((o-attrs (file-attributes default-directory 'integer))
                           (o-device (file-attribute-device-number o-attrs))
                           (o-ino (file-attribute-inode-number o-attrs)))
@@ -3110,7 +3110,7 @@ See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
                     (warn "no iruby-buffer-command saved in desktop data for %s. \
 Using current defaults for %s" name iruby-default-implementation )
                     (iruby-get-interactive-cmd iruby-default-implementation))))
-        (impl (or (cdr (assq 'iruby-buffer-impl-name desktop-buffer-locals))
+        (impl (or (cdr (assq 'iruby-buffer-impl desktop-buffer-locals))
                   (cdr (assq :impl data))
                   ;; FIXME this would not retrieve the implementation
                   ;; name if the ruby impl. command is prefixed or
@@ -3141,7 +3141,8 @@ Using current defaults for %s" name iruby-default-implementation )
       ;; is called, to some side effect as such? or may it be a side
       ;; effect of with-temp-buffer?
       (setq default-directory dir)
-      (let* ((procbuff (run-iruby-new cmd impl))
+      (let* ((procbuff (run-iruby-new cmd impl)) ;; point of call NB
+             ;; (FIXME needs environment bindings)
              (proc (get-buffer-process procbuff))
              (exp-dir (expand-file-name dir)))
         (when mapped
@@ -3198,7 +3199,7 @@ See also:
                   (cdr last-mapped) new-last
                   last-mapped new-last)))))
 
-    (append (list (cons :impl iruby-buffer-impl-name)
+    (append (list (cons :impl iruby-buffer-impl)
                   (cons :cmd iruby-buffer-command)
                   (cons :dir default-directory)
                   (cons :mapped (cdr mapped)))
