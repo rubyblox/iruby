@@ -2803,30 +2803,38 @@ console"
                   (iruby-find-console-buffer name default-directory))))
     (run-iruby-or-pop-to-buffer impl name new)))
 
+(defun iruby-console-wrap (cmd name &optional new)
+  (when (stringp cmd)
+    (setq cmd (iruby-split-shell-string cmd)))
+  (let ((binding (iruby-get-default-interactive-binding)))
+    (iruby-console-activate (iruby-wrap-binding cmd binding name)
+                            name new)))
+
 ;;;###autoload
 (defun iruby-console-zeus (dir &optional new)
   "Run Rails console in DIR using Zeus."
-  (interactive (list (iruby-console-read-directory 'zeus)))
-  (let ((default-directory (file-name-as-directory dir))
-        (exec-prefix (if (executable-find "zeus") "" "bundle exec ")))
-    (iruby-console-activate (concat exec-prefix "zeus console") "zeus" new)))
+  (interactive (list (iruby-console-read-directory 'zeus)
+                     current-prefix-arg))
+  (let* ((default-directory (file-name-as-directory dir))
+         (wrap-cmd  '("zeus" "console"))
+         (binding (iruby-get-default-interactive-binding)))
+    (unless (executable-find "zeus")
+      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
+    (iruby-console-wrap wrap-cmd "zeus" new)))
 
 ;;;###autoload
 (defun iruby-console-rails (dir &optional new)
   "Run Rails console in DIR."
-  (interactive (list (iruby-console-read-directory 'rails)))
-  (let* ((default-directory (file-name-as-directory dir))
+  (interactive (list (iruby-console-read-directory 'rails)
+                     interactive-prefix-arg))
+  (let* ((default-directory dir)
          (env (iruby-console-rails-env))
-         (with-bundler (file-exists-p "Gemfile")))
-    (iruby-console-activate
-     (concat (when with-bundler "bundle exec ")
-             "rails console -e "
-             env
-             ;; Note: this only has effect in Rails < 5.0 or >= 5.1.4
-             ;; https://github.com/rails/rails/pull/29010
-             (when (irb-needs-nomultiline-p)
-               " -- --nomultiline"))
-     "rails" new)))
+         (with-bundler (file-exists-p "Gemfile"))
+         (wrap-cmd '("rails" "console" "-e"))
+         (binding  (iruby-get-default-interactive-binding)))
+    (when with-bundler
+      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
+    (iruby-console-wrap wrap-cmd"rails" new)))
 
 (defun iruby-console-rails-env ()
   (if (stringp iruby-console-environment)
@@ -2849,16 +2857,16 @@ console"
 
 (defun iruby-console-hanami (dir &optional new)
   "Run Hanami console in DIR."
-  (interactive (list (iruby-console-read-directory 'hanami)))
+  (interactive (list (iruby-console-read-directory 'hanami)
+                     current-prefix-arg))
   (let* ((default-directory (file-name-as-directory dir))
          (env (iruby-console-hanami-env))
          (with-bundler (file-exists-p "Gemfile"))
-         (process-environment (cons (format "HANAMI_ENV=%s" env)
-                                    process-environment)))
-    (iruby-console-activate
-     (concat (when with-bundler "bundle exec ")
-             "hanami console")
-     "hanami" new)))
+         (wrap-cmd '("hanami" "console")))
+    (when with-bundler
+      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
+    (with-iruby-process-environment ((format "HANAMI_ENV=%s" env))
+      (iruby-console-wrap wrap-cmd "hanmai" new))))
 
 (defun iruby-console-hanami-env ()
   (if (stringp iruby-console-environment)
@@ -2879,26 +2887,25 @@ Gemfile, it should use the `gemspec' instruction."
   (let* ((default-directory (file-name-as-directory dir))
          ;; NB picking the first gemspec file here, if mutiple are available
          (gemspec
-          (car
-           (cl-remove "\\.#"
-                      (cl-remove-if #'backup-file-name-p
-                                    (cl-remove-if #'auto-save-file-name-p
-                                                  (file-expand-wildcards "*.gemspec"))))))
-         (impl-cmd (iruby-build-impl-cmd))
+          (car (cl-remove "\\.#" (file-expand-wildcards "*.gemspec"))))
          (name  (iruby-file-contents-match
                  gemspec "\\.name[ \t]*=[ \t]*['\"]\\([^'\"]+\\)['\"]" 1))
          (args (when (file-directory-p "lib")
                  (list "-I" "lib")))
-         files)
-
+         (bind (iruby-get-default-interactive-binding))
+         wrapper)
     (setq name
-          (cond
-            (name (string-trim name))
-            (t (file-name-sans-extension gemspec))))
-
-    (iruby-console-activate (append impl-cmd args)
-                       (format "gem(%s)" name)
-                       new)))
+          (format "gem(%s)"
+                  (cond
+                    (name (string-trim name))
+                    (t (file-name-sans-extension gemspec))))
+          wrapper (iruby-wrap-binding nil bind name))
+    (when args
+      (setf (iruby:interactive-args wrapper)
+            (append (iruby:interactive-args wrapper)
+                    args)))
+    ;; calling this directly here, due to the args append
+    (iruby-console-activate wrapper name new)))
 
 (defun iruby-console-racksh-p ()
   (and (file-exists-p "Gemfile.lock")
@@ -2906,9 +2913,10 @@ Gemfile, it should use the `gemspec' instruction."
 
 (defun iruby-console-racksh (dir &optional new)
   "Run racksh in DIR."
-  (interactive (list (iruby-console-read-directory 'racksh)))
+  (interactive (list (iruby-console-read-directory 'racksh)
+                     current-prefix-arg))
   (let ((default-directory (file-name-as-directory dir)))
-    (iruby-console-activate "bundle exec racksh" "racksh" new)))
+    (iruby-console-wrap '("bundle" "exec" "rackish") "rackish" new)))
 
 (defun iruby-in-ruby-compilation-modes (mode)
   "Check if MODE is a Ruby compilation mode."
@@ -2957,15 +2965,21 @@ Gemfile, it should use the `gemspec' instruction."
   "Run custom bin/console, console or console.rb in DIR."
   ;; FIXME the console cmd may need additional configuration for use
   ;; under iruby
-  (interactive (list (iruby-console-read-directory 'script)))
-  (let ((default-directory (file-name-as-directory dir)))
+  (interactive (list (iruby-console-read-directory 'script)
+                     current-prefix-arg))
+  (let ((default-directory (file-name-as-directory dir))
+        (wrap-cmd '("bundle" "exec"))
+        name)
     (cond
      ((file-exists-p "bin/console")
-      (iruby-console-activate "bundle exec bin/console" "bin/console" new))
+      (setq wrap-cmd (append wrap-cmd (setq name "bin/console"))))
      ((file-exists-p "console.rb")
-      (iruby-console-activate "bundle exec ruby console.rb" "console.rb" new))
+      (setq wrap-cmd (append wrap-cmd (list "ruby" (setq name "console.rb")))))
      ((file-exists-p "console")
-      (iruby-console-activate "bundle exec console" "console.rb" new)))))
+      (setq wrap-cmd (append wrap-cmd (list (setq name "console"))))))
+    (cond
+      (name (iruby-console-wrap wrap-cmd name new))
+      (t (error "Found no console script in %S" dir)))))
 
 ;;;###autoload
 (defun iruby-console-default (dir &optional new)
@@ -2976,11 +2990,8 @@ Gemfile, it should use the `gemspec' instruction."
     (cond
       ((file-exists-p "Gemfile")
        (let* ((project (file-name-nondirectory (directory-file-name dir)))
-              (name (format "console (%s)" project))
-              (binding (iruby-get-default-interactive-binding)))
-         (iruby-console-activate
-          (iruby-wrap-binding '("bundle" "exec") binding name)
-          name new)))
+              (name (format "console (%s)" project)))
+         (iruby-console-wrap '("bundle" "exec") name new)))
       (t
        (error "Unable to run a bundler console in a directory with no Gemfile")))))
 

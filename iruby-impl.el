@@ -685,7 +685,7 @@ See also: `iruby-get-default-implementation' and
 (cl-defgeneric iruby-wrap-binding (wrapper base &optional name)
   (:method ((wrapper string) base &optional name)
     (iruby-wrap-binding (iruby-split-shell-string wrapper) base name))
-  (:method ((wrapper cons) (base iruby-interactive-binding) &optional name)
+  (:method ((wrapper list) (base iruby-interactive-binding) &optional name)
     (let* ((bin (car wrapper))
            (inst (iruby-wrapper-binding
                   :wrapper-base-cmd wrapper
