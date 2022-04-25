@@ -596,8 +596,6 @@ See also: The custom variables `iruby-default-implementation',
     :group 'iruby-impl)
 
 
-
-
 (make-variable-buffer-local
  (defvar iruby-impl-binding-expr nil
    "ruby expression for binding in eval under the active implementation"))
@@ -673,9 +671,7 @@ This value should be a positive number or zero."
 
 
 (defvar iruby-threads-p (featurep 'threads)
-  "If non-nil, threads are available in this Emacs.
-
-See also: `iruby-output-wait'")
+  "If non-nil, threads are available in this Emacs.")
 
 (defconst iruby-prompt-format
   (concat
@@ -687,7 +683,7 @@ See also: `iruby-output-wait'")
       "\\(^\\(irb([^)]+)"                 ; IRB default
       "\\([[0-9]+] \\)?[Pp]ry ?([^)]+)"   ; Pry
       "\\(jruby-\\|JRUBY-\\)?[1-9]\\.[0-9]\\(\\.[0-9]+\\)*\\(-?p?[0-9]+\\)?" ; RVM
-      "^rbx-head\\)")                     ; RVM continued
+      "\\(^rbx-head\\)")                     ; RVM continued
     "\\|")
    ;; Statement and nesting counters, common to the last four.
    " ?[0-9:]* ?%s *\\)")
@@ -969,7 +965,10 @@ The following commands are available:
   (set (make-local-variable 'comint-delimiter-argument-list)
         '(?\| ?& ?< ?> ?\( ?\) ?\; ?\" ?\.))
 
+  ;; preoutput filter is where text props for the prompt are added
   (add-hook 'comint-preoutput-filter-functions 'iruby-preoutput-filter nil t)
+  ;; output filter is used for recovering any pending input after
+  ;; process output
   (add-hook 'comint-output-filter-functions 'iruby-output-filter nil t)
 
   (add-to-list 'kill-buffer-hook 'iruby-drop-process)
@@ -2259,7 +2258,9 @@ successful load of the file, within the ruby process"
    "If non-nil, an expresion to append after the next input prompt
 
 This variable's value may be set during `iruby-send-last-sexp' and
-will be handled in `iruby-output-filter'"))
+will be handled in `iruby-output-filter'
+
+See also: `iruby-strip-pending-input""))
 
 
 (defun iruby-strip-pending-input (&optional buffer)
