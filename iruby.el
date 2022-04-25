@@ -1322,13 +1322,15 @@ value.
 To run a ruby implementation not listed in `iruby-implementations', see
 also: `run-iruby'"
   (interactive
-   (let ((impl (if current-prefix-arg
-                   (iruby-read-impl)
-                 iruby-default-implementation)))
-     (list impl current-prefix-arg impl)))
-  (let ((%impl (or impl iruby-default-implementation)))
-    (let ((command (iruby:parse-cmd %impl)))
-      (run-iruby command %impl new %impl))))
+   (let* ((binding (if current-prefix-arg
+                       (iruby-read-impl) ;; FIXME UPDATE
+                     iruby-default-interactive-binding))
+          (inst (iruby-get-interactive-binding binding)))
+     (list inst current-prefix-arg (iruby-impl-name inst))))
+  (let ((%impl (if (stringp impl)
+                   (iruby-split-shell-string impl)
+                 impl)))
+    (run-iruby impl (or name (iruby-impl-name %impl)) new)))
 
 
 (defun iruby-get-prevailing-buffer (&optional no-filter-live)
@@ -1376,7 +1378,7 @@ match irrespective of whether the buffer's iRuby process is running"
         )))
 
 ;;;###autoload
-(defun run-iruby (&optional command impl new name)
+(defun run-iruby (&optional impl name new)
   "Run an inferior Ruby process, input and output in a buffer.
 
 If there is a process already running in a corresponding buffer,
@@ -1405,21 +1407,17 @@ the `command' value"
   ;; This function is interactive and named like this for consistency
   ;; with `run-python', `run-octave', `run-lisp' and so on.
   ;; We're keeping both it and `iruby' for backward compatibility.
-  (interactive (let ((cmd (if current-prefix-arg
-                              (read-shell-command "Run Ruby interactively: ")
-                            ""))
+  (interactive (let ((cmd (when current-prefix-arg
+                            (read-shell-command "Run Ruby interactively: ")))
                      (impl (unless current-prefix-arg
                              iruby-default-implementation)))
-                 (when (zerop (length cmd))
-                   (setq cmd
-                         (iruby:parse-cmd iruby-default-implementation)))
-                 (list cmd impl current-prefix-arg)))
-  (let* ((%command (cl-etypecase command
-                     (string (iruby-split-shell-string command))
-                     (cons command)
-                     (null (iruby:parse-cmd name))))
-         (%name (or name (file-name-nondirectory (car %command)))))
-    (run-iruby-or-pop-to-buffer %command impl new %name)))
+                 (cond
+                   ((or (null cmd) (zerop (length cmd)))
+                    (setq cmd impl))
+                   (t (setq cmd (iruby-split-shell-string cmd))))
+                 (list cmd current-prefix-arg
+                       (iruby-impl-name cmd))))
+  (run-iruby-or-pop-to-buffer impl name new))
 
 (defun iruby-process-sentinel (process state)
   "Process sentinel installed by `run-iruby-new'
@@ -1980,7 +1978,7 @@ will be seleted by `iruby-read-process-interactive'"
         (setf (car cached-data) proc)))))
 
 
-(defun run-iruby-new (command &optional name impl)
+(defun run-iruby-new (command &optional name)
   "Create a new inferior Ruby process in a new buffer.
 
 COMMAND is the command to call. This value may be provided as a string

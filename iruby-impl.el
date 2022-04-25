@@ -76,7 +76,15 @@
 ;; main code, iruby-impl.el
 ;;
 
-(cl-defgeneric iruby-impl-name (datum))
+(cl-defgeneric iruby-impl-name (datum)
+  (:method ((datum cons))
+    "Determine an implementation name from the shell command list in DATUM"
+    (let ((bin (car datum)))
+      (cl-typecase bin
+        (string (file-name-nondirectory bin))
+        ;; fallback - no value substitution here
+        (t (prin1-to-string bin))))))
+
 (cl-defgeneric iruby-impl-bin (datum))
 (cl-defgeneric iruby-impl-requires (datum))
 (cl-defgeneric iruby-impl-args (datum))
