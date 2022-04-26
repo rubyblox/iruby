@@ -2468,14 +2468,12 @@ loading the file."
       (insert (format "load(%%q(%s));" (iruby-escape-single-quoted file)))
       (iruby-send-region (point-min) (point-max) nil nil proc))))
 
-
 (defun iruby-send-buffer ()
   "Send the current buffer to the inferior Ruby process."
   (interactive)
   (save-restriction
     (widen)
     (iruby-send-region (point-min) (point-max))))
-
 
 (defun iruby-send-buffer-and-go ()
   "Send the current buffer to the inferior Ruby process.
@@ -2484,14 +2482,12 @@ Then switch to the process buffer."
   (iruby-send-buffer)
   (iruby-switch-to-inf t))
 
-
 (defun iruby-send-line ()
   "Send the current line to the inferior Ruby process."
   (interactive)
   (save-restriction
     (widen)
     (iruby-send-region (point-at-bol) (point-at-eol))))
-
 
 (defun iruby-send-line-and-go ()
   "Send the current line to the inferior Ruby process.
@@ -2500,104 +2496,6 @@ Then switch to the process buffer."
   (iruby-send-line)
   (iruby-switch-to-inf t))
 
-
-(defun iruby-escape-single-quoted (str)
-  "Escape single quotes, double quotes and newlines in STR."
-  (replace-regexp-in-string "'" "\\\\'"
-    (replace-regexp-in-string "\n" "\\\\n"
-      (replace-regexp-in-string "\\\\" "\\\\\\\\" str))))
-
-
-(defun iruby-completions (prefix)
-  "Return a list of completions for the Ruby expression starting with EXPR."
-  ;; NB for `iruby-completion-at-point' under buffer's
-  ;; `completion-at-point-functions'
-  (let* ((proc (iruby-proc))
-         (line (buffer-substring
-                (save-excursion (move-beginning-of-line 1)
-                                (point))
-                (point)))
-         (expr (iruby-completion-expr-at-point))
-         (prefix-offset (- (length expr) (length prefix)))
-         (previous-filter (process-filter proc))
-         (kept "")
-         completions)
-    (unwind-protect
-         (progn
-           (set-process-filter proc
-                               (lambda (proc string)
-                                 (setq kept (concat kept string))
-                                 ;; ensure that the string is not displayed:
-                                 nil))
-           (let ((completion-snippet
-                  (format (concat iruby-impl-completion-expr "; nil;\n")
-                   (iruby-escape-single-quoted expr)
-                   (iruby-escape-single-quoted line))))
-             (process-send-string proc completion-snippet)
-             (while (and (not (string-match iruby-prompt-pattern kept))
-                         ;; how now :: ?
-                         (accept-process-output proc 2)))
-             (setq completions (butlast (split-string kept "\r?\n") 2))
-             ;; Subprocess echoes output on Windows and OS X.
-             (when (and completions (string= (concat (car completions) "\n") completion-snippet))
-               (setq completions (cdr completions)))))
-      ;; ensure:
-      (set-process-filter proc previous-filter))
-
-    (mapcar
-     (lambda (str)
-       (substring str prefix-offset))
-     completions)))
-
-
-(defconst iruby-ruby-expr-break-chars " \t\n\"\'`><,;|&{(")
-
-(defun iruby-completion-bounds-of-prefix ()
-  "Return bounds of expression at point to complete."
-  (let ((iruby-ruby-expr-break-chars ;; NB this is the constant's sole usage
-         (concat iruby-ruby-expr-break-chars ".")))
-    (iruby-completion-bounds-of-expr-at-point)))
-
-
-(defun iruby-completion-bounds-of-expr-at-point ()
-  "Return bounds of expression at point to complete."
-  (let ((s (char-syntax (following-char))))
-    (save-excursion
-      (when (eq s ?.)
-        (backward-char))
-      (let ((bounds (iruby-bounds-of-thing 'sexp)))
-        ;; (warn "Bounds %S" bounds)
-        (when (and (eq s ?.) bounds)
-          ;; when completing at punctuation
-          (let ((max (point-max))
-                (end (cdr bounds)))
-            (unless (= max end)
-              (setf (cdr bounds) (1+ end)))))
-        bounds))))
-
-
-(defun iruby-completion-expr-at-point ()
-  "Return expression at point to complete."
-  (let ((bounds (iruby-completion-bounds-of-expr-at-point)))
-    (and bounds
-         (buffer-substring-no-properties (car bounds) (cdr bounds)))))
-
-
-(defun iruby-completion-at-point ()
-  "Retrieve the list of completions and prompt the user.
-Returns the selected completion or nil."
-  (cond
-    (iruby-impl-completion-expr
-     (let ((bounds (iruby-completion-bounds-of-prefix)))
-       (when bounds
-         (list (car bounds) (cdr bounds)
-               (if (fboundp 'completion-table-with-cache)
-                   (completion-table-with-cache #'iruby-completions)
-                 (completion-table-dynamic #'iruby-completions))))))
-    (t
-     (iruby-warn-once "Completion not configured for implementation %s"
-                      iruby-buffer-impl))))
-
 (defun iruby-smie--forward-token ()
   (let ((inhibit-field-text-motion t))
     (ruby-smie--forward-token)))
@@ -2605,6 +2503,10 @@ Returns the selected completion or nil."
 (defun iruby-smie--backward-token ()
   (let ((inhibit-field-text-motion t))
     (ruby-smie--backward-token)))
+
+;;
+;; after-load-alist handling for iruby-desktop
+;;
 
 (defun iruby-load-desktop-support ()
   (interactive)
@@ -2626,6 +2528,7 @@ Returns the selected completion or nil."
 
 (provide 'iruby)
 
+(require 'iruby-complete)
 (require 'iruby-console)
 (require 'iruby-compile)
 

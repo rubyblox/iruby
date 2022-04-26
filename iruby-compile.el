@@ -130,7 +130,6 @@ keymaps to bind `iruby-switch-from-compilation' to `С-x C-q'."
 
 (defun iruby-disable-auto-breakpoint ()
   (interactive)
-  (remove-hook 'compilation-filter-hook 'iruby-auto-enter
+  (remove-hook 'compilation-filter-hook 'iruby-auto-enter))
 
-
-(provide 'iruby-comp)
+(provide 'iruby-compile)
