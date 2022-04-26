@@ -475,8 +475,9 @@ cmdline for this slot's value.")
    (base-args
     :initform '("-e" "Pry::CLI.start(Pry::CLI.parse_options)"))
    (args
-    ;; some defaults for use with iRuby
-    :initform ("--no-pager" "--no-history"))
+    ;; some defaults for Pry with iRuby
+    ;; NB the --no-history option might not be recommended
+    :initform ("--no-pager" "--no-color"))
    (use-multiline
     :initform :omit)
    (use-readline
@@ -533,6 +534,8 @@ cmdline for this slot's value.")
           (error "No interactive implementation found for name %S" datum))))
   )
 
+(defun iruby-get-default-interactive-binding ()
+  (iruby-get-interactive-binding iruby-default-interactive-binding))
 
 ;; (iruby-get-interactive-binding "irb")
 ;; (iruby-get-interactive-binding  "pry")

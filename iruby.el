@@ -55,7 +55,7 @@
 ;;
 ;; The `iruby' command, if called with an interactive prefix argument,
 ;; will prompt the user to select an existing implementation under
-;;`iruby-implementations'.
+;;`iruby-interactive-bindings'.
 ;;
 ;; With an interactive prefix argument, the `run-iruby' command will
 ;; prompt the user to enter a shell command string for launching an irb
@@ -675,32 +675,28 @@ This value should be a positive number or zero."
 
 (defconst iruby-prompt-format
   (concat
+   "\\("
    (mapconcat
     #'identity
-    '("\\(^%s> *\\)"                      ; Simple
-      "\\(^(rdb:1) *\\)"                  ; Debugger
-      "\\(^(byebug) *\\)"                 ; byebug
-      "\\(^\\(irb([^)]+)"                 ; IRB default
+    '("^%s> *"		; Simple
+      "(rdb:1) *"	; Debugger
+      "(byebug) *"	; byebug
+      "(irb([^)]+)"	; IRB default
       "\\([[0-9]+] \\)?[Pp]ry ?([^)]+)"   ; Pry
       "\\(jruby-\\|JRUBY-\\)?[1-9]\\.[0-9]\\(\\.[0-9]+\\)*\\(-?p?[0-9]+\\)?" ; RVM
-      "\\(^rbx-head\\)")                     ; RVM continued
+      "rbx-head")	; RVM continued
     "\\|")
    ;; Statement and nesting counters, common to the last four.
    " ?[0-9:]* ?%s *\\)")
-  "Format string for the prompt regexp pattern.
-Two placeholders: first char in the Simple prompt, and the last
-graphical char in all other prompts.")
+  "Format string for the prompt regexp pattern.")
 
 (defvar iruby-first-prompt-pattern (format iruby-prompt-format ">" ">")
-  ;; - FIXME unused, assuming the --inf-ruby-mode arg for the Ruby impl
-  ;;   obviates any need to parse for a prompt on continued input
-  ;; - TBD negotating this with the Ruby implementation, at time of
-  ;;   inf-ruby connect, along with other prompt fields (including the
-  ;;   return value syntax)
+  ;; - FIXME unused, presently.
+  ;; This multi-level matching may need more of an impl
   "First prompt regex pattern of Ruby interpreter.")
 
-(defvar iruby-prompt-pattern (format iruby-prompt-format "[?>]" "[\]>*\"'/`]")
-  ;; - FIXME see previous (not unused)
+(defvar iruby-prompt-pattern (format iruby-prompt-format "[?>]" "[\\]>*\"'/`]")
+  ;; - FIXME see previous
   "Prompt regex pattern of Ruby interpreter.")
 
 (defvar iruby-mode-hook nil
@@ -1294,26 +1290,28 @@ Otherwise, any input at the prompt will be sent to the iRuby process."
 returning `iruby-default-implementation' if user has entered no text.
 
 PROMPT will default to the string, \"Ruby Implementation: \""
-  (let* ((txt
-          (completing-read (or prompt "Ruby Implementation: ")
-                           (mapc #'car iruby-implementations)
-                           nil t)))
-    (if (and (stringp txt) (zerop (length txt)))
-        iruby-default-implementation
-      txt)))
+  (let ((name
+         (completing-read (or prompt "Ruby Implementation: ")
+                          (mapcar #'iruby-impl-name iruby-interactive-bindings)
+                          nil t nil nil iruby-default-interactive-binding)))
+    (cl-find name iruby-interactive-bindings
+      :test #'equal :key #'iruby-impl-name)))
+
+;;; ad-hoc test
+;; (iruby-read-impl)
 
 ;;;###autoload
 (defun iruby (&optional impl new name)
   "Run or switch to a Ruby process.
 
 With prefix argument, prompts for which Ruby implementation to use, from
-the list `iruby-implementations'.
+the list `iruby-interactive-bindings'.
 
 Otherwise, if there is an existing Ruby process in an iRuby buffer,
 switch to that buffer.
 
 IMPL should be nil, or a string match the name of an implementation in
-`iruby-implementations'.
+`iruby-interactive-bindings'.
 
 SYNTAX should be nil, or a string matching a ruby-mode syntax in
 `iruby-ruby-modes'.
@@ -1321,12 +1319,12 @@ SYNTAX should be nil, or a string matching a ruby-mode syntax in
 If either value is nil, a reasonable default will be computed for that
 value.
 
-To run a ruby implementation not listed in `iruby-implementations', see
-also: `run-iruby'"
+To run a ruby implementation not listed in `iruby-interactive-bindings',
+see also: `run-iruby'"
   (interactive
    (let* ((binding (if current-prefix-arg
-                       (iruby-read-impl) ;; FIXME UPDATE
-                     iruby-default-interactive-binding))
+                       (iruby-read-impl)
+                     (iruby-get-default-interactive-binding)))
           (inst (iruby-get-interactive-binding binding)))
      (list inst current-prefix-arg (iruby-impl-name inst))))
   (let ((%impl (if (stringp impl)
@@ -1389,7 +1387,9 @@ switch to that buffer. Otherwise create a new buffer.
 The consecutive buffer names will be:
 `*NAME*', `*NAME*<2>', `*NAME*<3>' and so on.
 
-COMMAND defaults to the default entry in `iruby-implementations'.
+IMPL may be an `iruby-interactive-binding' object, a string providing a
+shell command, or nil. If nil, the interactive implementation named in
+`iruby-default-interactive-binding' will be used.
 
 NAME defaults to the nondirectory filename of the first element in the
 command string
@@ -1409,24 +1409,24 @@ the `command' value"
   ;; This function is interactive and named like this for consistency
   ;; with `run-python', `run-octave', `run-lisp' and so on.
   ;; We're keeping both it and `iruby' for backward compatibility.
-  (interactive (let ((cmd (when current-prefix-arg
-                            (read-shell-command "Run Ruby interactively: ")))
-                     (impl (unless current-prefix-arg
-                             iruby-default-implementation)))
+  (interactive (let ((cmd (read-shell-command "Run ruby command: ")))
                  (cond
                    ((or (null cmd) (zerop (length cmd)))
-                    (setq cmd impl))
+                    (setq cmd nil))
                    (t (setq cmd (iruby-split-shell-string cmd))))
-                 (list cmd current-prefix-arg
-                       (iruby-impl-name cmd))))
+                 (list cmd (iruby-impl-name cmd)
+                       current-prefix-arg)))
     (let ((buffer (unless new (iruby-get-prevailing-buffer))))
-    (when (stringp impl)
-      (setq impl (iruby-split-shell-string impl)))
-    (when (or new (not (and buffer
-                          (buffer-live-p buffer)
-                          (iruby-process-running-p buffer))))
-      (setq buffer (run-iruby-new impl name)))
-    (iruby-switch-to-process (iruby-buffer-process buffer))))
+      (cond
+        ((stringp impl)
+         (setq impl (iruby-split-shell-string impl)))
+        ((null impl)
+         (setq (iruby-get-default-interactive-binding))))
+      (when (or new (not (and buffer
+                              (buffer-live-p buffer)
+                              (iruby-process-running-p buffer))))
+        (setq buffer (run-iruby-new impl name)))
+      (iruby-switch-to-process (iruby-buffer-process buffer))))
 
 (defun iruby-process-sentinel (process state)
   "Process sentinel installed by `run-iruby-new'
@@ -2005,17 +2005,17 @@ used"
                  (iruby-interactive-binding command)
                  (t commandlist)))
          (buffer-name (generate-new-buffer-name (format "*%s*" name)))
+         (buffer (get-buffer-create buffer-name))
          ;; NB this should pick up any current major-mode for computing
          ;; the syntax to use in the iruby buffer
          (syntax (car (iruby-find-syntax)))
-         buffer process)
+         process)
 
     (with-iruby-process-environment ()
-      (setq buffer
-            (apply 'make-comint-in-buffer
-                   name buffer-name
-                   (car commandlist) nil (cdr commandlist))
-            process (get-buffer-process buffer)))
+      (apply 'make-comint-in-buffer
+             name buffer
+             (car commandlist) nil (cdr commandlist))
+      (setq process (get-buffer-process buffer)))
 
     (set-process-sentinel process 'iruby-process-sentinel)
     (iruby-add-process-buffer process buffer)
