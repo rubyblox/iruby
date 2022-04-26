@@ -18,15 +18,15 @@
 ;; it under the terms of the GNU General Public License as published by
 ;; the Free Software Foundation, either version 3 of the License, or
 ;; (at your option) any later version.
-
+;;
 ;; This program is distributed in the hope that it will be useful,
 ;; but WITHOUT ANY WARRANTY; without even the implied warranty of
 ;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 ;; GNU General Public License for more details.
-
+;;
 ;; You should have received a copy of the GNU General Public License
 ;; along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
+;;
 ;; This file is not part of GNU Emacs.
 
 ;;; Commentary:
@@ -807,7 +807,7 @@ See also: `iruby-mode-map' and `iruby-minor-mode-map'"
 (make-obsolete 'iruby-setup-keybindings 'add-hook "2.3.1")
 
 
-(defvar iruby-warnings-once nil
+(defvar iruby-warnings-once-history nil
   "Session-local storage for `iruby-warn-once'")
 
 (defun iruby-warn-once (message &rest format-args)
@@ -818,15 +818,15 @@ This function is used in `iruby-completion-at-point', to ensure that the
 user is notified at most once when the local iRuby implementation does
 not have any completion support enabled in iRuby"
   (let ((msg (apply #'format-message message format-args)))
-    (unless (member msg iruby-warnings-once)
+    (unless (member msg iruby-warnings-once-history)
       ;; NB ensuring that the actual format-args are passed to the
       ;; warning - using the locally produced msg only for purposes
       ;; of caching
-      (push msg iruby-warnings-once)
+      (push msg iruby-warnings-once-history)
       (apply #'warn message format-args))))
 
 
-(defvar iruby-warnings-once nil
+(defvar iruby-warnings-once-history nil
   "Session-local storage for `iruby-warn-once'")
 
 (defun iruby-warn-once (message &rest format-args)
@@ -837,11 +837,11 @@ This function is used in `iruby-completion-at-point', to ensure that the
 user is notified at most once when the local iRuby implementation does
 not have any completion support enabled in iRuby"
   (let ((msg (apply #'format-message message format-args)))
-    (unless (member msg iruby-warnings-once)
+    (unless (member msg iruby-warnings-once-history)
       ;; NB ensuring that the actual format-args are passed to the
       ;; warning - using the locally produced msg only for purposes
       ;; of caching
-      (push msg iruby-warnings-once)
+      (push msg iruby-warnings-once-history)
       (apply #'warn message format-args))))
 
 
@@ -1631,8 +1631,7 @@ evaluation of the BODY forms. This macro itself will not store the
             (selected
              (completing-read (format "%s (default: %s): " prompt default)
                               table nil t nil 'iruby-process-history default)))
-       (cdr (assoc selected table)))
-     )
+       (cdr (assoc selected table))))
     (t
      ;; only one process registered
      (caar iruby-process-buffers))))
@@ -2260,7 +2259,7 @@ successful load of the file, within the ruby process"
 This variable's value may be set during `iruby-send-last-sexp' and
 will be handled in `iruby-output-filter'
 
-See also: `iruby-strip-pending-input""))
+See also: `iruby-strip-pending-input"))
 
 
 (defun iruby-strip-pending-input (&optional buffer)
@@ -2584,7 +2583,6 @@ Then switch to the process buffer."
          (buffer-substring-no-properties (car bounds) (cdr bounds)))))
 
 
-
 (defun iruby-completion-at-point ()
   "Retrieve the list of completions and prompt the user.
 Returns the selected completion or nil."
@@ -2600,423 +2598,6 @@ Returns the selected completion or nil."
      (iruby-warn-once "Completion not configured for implementation %s"
                       iruby-buffer-impl))))
 
-
-
-(defvar iruby-orig-compilation-mode nil
-  "Original compilation mode before switching to `iruby-mode'.")
-
-(defvar iruby-orig-process-filter nil
-  "Original process filter before switching to `iruby-mode'.")
-
-(defvar iruby-orig-error-regexp-alist nil
-  "Original `compilation-error-regexp-alist' before switching to `iruby-mode.'")
-
-
-(defun iruby-switch-from-compilation ()
-  "Make the buffer writable and switch to `iruby-mode'.
-Recommended for use when the program being executed enters
-interactive mode, i.e. hits a debugger breakpoint."
-  (interactive)
-  (setq buffer-read-only nil)
-  (buffer-enable-undo)
-  (let ((mode major-mode)
-        (arguments compilation-arguments)
-        (orig-mode-line-process mode-line-process)
-        (orig-error-alist compilation-error-regexp-alist))
-    (iruby-mode)
-    (make-local-variable 'iruby-orig-compilation-mode)
-    (setq iruby-orig-compilation-mode mode)
-    (set (make-local-variable 'compilation-arguments) arguments)
-    (set (make-local-variable 'iruby-orig-error-regexp-alist)
-         orig-error-alist)
-    (when orig-mode-line-process
-      (setq mode-line-process orig-mode-line-process)))
-  (let ((proc (get-buffer-process (current-buffer))))
-    (when proc
-      (make-local-variable 'iruby-orig-process-filter)
-      (setq iruby-orig-process-filter (process-filter proc))
-      (set-process-filter proc 'comint-output-filter))
-    (when (looking-back iruby-prompt-pattern (line-beginning-position))
-      (let ((line (match-string 0)))
-        (delete-region (match-beginning 0) (point))
-        (comint-output-filter proc line)))))
-
-(defun iruby-maybe-switch-to-compilation ()
-  "Switch to compilation mode this buffer was in before
-`iruby-switch-from-compilation' was called, if it was.
-Otherwise, just toggle read-only status."
-  (interactive)
-  (if iruby-orig-compilation-mode
-      (let ((orig-mode-line-process mode-line-process)
-            (proc (get-buffer-process (current-buffer)))
-            (arguments compilation-arguments)
-            (filter iruby-orig-process-filter)
-            (errors iruby-orig-error-regexp-alist))
-        (unwind-protect
-             (funcall iruby-orig-compilation-mode)
-          (setq mode-line-process orig-mode-line-process)
-          (set (make-local-variable 'compilation-arguments) arguments)
-          (set (make-local-variable 'compilation-error-regexp-alist) errors)
-          (when proc
-            (set-process-filter proc filter))))
-    (toggle-read-only)))
-
-;;;###autoload
-(defun iruby-switch-setup ()
-  "Modify `rspec-compilation-mode' and `ruby-compilation-mode'
-keymaps to bind `iruby-switch-from-compilation' to `С-x C-q'."
-  (eval-after-load 'rspec-mode
-    '(define-key rspec-compilation-mode-map (kbd "C-x C-q")
-       'iruby-switch-from-compilation))
-  (eval-after-load 'ruby-compilation
-    ;; NB available in the rinari src tree, or separately via melpa/...
-    '(define-key ruby-compilation-mode-map (kbd "C-x C-q")
-       'iruby-switch-from-compilation))
-  (eval-after-load 'projectile-rails
-    '(define-key projectile-rails-server-mode-map (kbd "C-x C-q")
-       'iruby-switch-from-compilation)))
-
-(defvar iruby-console-patterns-alist
-  '(("Gemfile" . default)
-    ("*.gemspec" . gem)
-    (".zeus.sock" . zeus)
-    (iruby-console-rails-p . rails)
-    (iruby-console-hanami-p . hanami)
-    (iruby-console-script-p . script)
-    (iruby-console-racksh-p . racksh))
-  "Mapping from predicates (wildcard patterns or functions) to type symbols.
-`iruby-console-auto' walks up from the current directory until
-one of the predicates matches, then calls `iruby-console-TYPE',
-passing it the found directory.")
-
-(defvar iruby-breakpoint-pattern "\\(\\[1\\] pry(\\)\\|\\((rdb:1)\\)\\|\\((byebug)\\)"
-  "Pattern found when a breakpoint is triggered in a compilation session.
-This checks if the current line is a pry or ruby-debug prompt.")
-
-
-(defun iruby-expand-files (path &optional full)
-  "expand any glob patterns in PATH, returning a list of file pathnames
-
-PATH should contain a literal pathname expression or a pathname
-expression including glob patterns.
-
-If FULL is non-nil, a list of absolute pathnames will be returned. By
-default, pathnames will be returned as relative to PATH.
-
-This function will ensure that any autosave files or symbolic links to
-noneixstent files will not be present in the returned list of
-pathnames.
-
-The syntax for PATH would be that used in `file-expand-wildcards'"
-  (cl-remove-if 'auto-save-file-name-p
-                (cl-remove-if-not 'file-exists-p
-                                  (file-expand-wildcards path))))
-
-
-(defun iruby-console-match (dir)
-  "Find matching console command for DIR, if any."
-  (catch 'type
-    (dolist (pair iruby-console-patterns-alist)
-      (let ((default-directory dir)
-            (pred (car pair)))
-        (when (if (stringp pred)
-                  (iruby-expand-files pred)
-                (funcall pred))
-          (throw 'type (cdr pair)))))))
-
-;;;###autoload
-(defun iruby-console-auto (&optional dir new)
-  "Run the appropriate Ruby console command, or the default iRuby
-
-The command and the directory to run it from are detected
-automatically.
-
-If an iRuby buffer exists for DIR, that buffer will be selected, else a
-new iRuby process will be created.
-
-If no matching project files can be found, this will run the default
-iRuby implementation, with `default-directory' set to DIR.
-
-If called interactively, the selected buffer's `default-directory' will
-be used as DIR unless called with a prefix argument. If called with a
-prefix argument, the user will be asked to select a directory for the
-console"
-  (interactive
-   (list (if current-prefix-arg
-             (let ((choice
-                    (read-directory-name "Run iRuby console in directory: "
-                                         nil nil t)))
-               (cond
-                 ((zerop (length choice)) default-directory)
-                 (t choice)))
-           ;; else, just use default-directory
-           default-directory)
-         current-prefix-arg))
-  (let* ((default-directory dir)
-         (use-dir
-          ;; FIXME not exactly working out
-          (locate-dominating-file default-directory #'iruby-console-match))
-         (type (progn (warn "USING DIR %S" use-dir)
-                      (let ((it (iruby-console-match use-dir)))
-                        (warn "MATCHED FOR %S" it)
-                        it)))
-         (fun (when type (intern (format "iruby-console-%s" type)))))
-    (cond
-      ((null type)
-       (warn "iruby-console-auto: No console available for %s" dir)
-       (iruby))
-      ((fboundp fun)
-       (funcall fun use-dir new))
-      (t
-       (error "Console function not bound: %S" fun)))))
-
-(defun iruby-console-rails-p ()
-  (and (file-exists-p "Gemfile.lock")
-       (iruby-file-contents-match "Gemfile.lock" "^ +railties ")
-       (file-exists-p "config/application.rb")
-       (iruby-file-contents-match "config/application.rb"
-                                     "\\_<Rails::Application\\_>")))
-
-(defun iruby-console-read-directory (type)
-  (or
-   (let ((predicate (car (rassq type iruby-console-patterns-alist))))
-     (locate-dominating-file (read-directory-name "" nil nil t)
-                             (lambda (dir)
-                               (let ((default-directory dir))
-                                 (if (stringp predicate)
-                                     (iruby-expand-files predicate)
-                                   (funcall predicate))))))
-   ;; FIXME do not err in this case, just run a normal `iruby'
-   ;; ... with warning
-   ;;
-   ;; this should not be where an assert is buried for known-console-dir-p etc
-   (error "No matching directory for %s console found"
-          (capitalize (symbol-name type)))))
-
-(defun iruby-find-console-buffer (dir name)
-  (let* ((dir-attrs (file-attributes dir 'integer))
-         (dir-device (file-attribute-device-number dir-attrs))
-         (dir-ino (file-attribute-inode-number dir-attrs)))
-    (cl-block search
-      (cl-dolist (elt iruby-process-buffers)
-        (let ((buff (cdr elt)))
-          (when (buffer-live-p buff)
-            (with-current-buffer buff
-              ;; FIXME stop using the buffer impl name as a project/console name
-              (and (equal name (iruby-impl-name iruby-buffer-impl))
-                   (let* ((o-attrs (file-attributes default-directory 'integer))
-                          (o-device (file-attribute-device-number o-attrs))
-                          (o-ino (file-attribute-inode-number o-attrs)))
-                     (= o-device dir-device)
-                     (= o-ino dir-ino))
-                   (cl-return-from search buff)))))))))
-
-(defun iruby-console-activate (impl name &optional new)
-  (let ((exists (unless new
-                  (iruby-find-console-buffer name default-directory))))
-    (run-iruby impl name new)))
-
-(defun iruby-console-wrap (cmd name &optional new)
-  (when (stringp cmd)
-    (setq cmd (iruby-split-shell-string cmd)))
-  (let ((binding (iruby-get-default-interactive-binding)))
-    (iruby-console-activate (iruby-wrap-binding cmd binding name)
-                            name new)))
-
-;;;###autoload
-(defun iruby-console-zeus (dir &optional new)
-  "Run Rails console in DIR using Zeus."
-  (interactive (list (iruby-console-read-directory 'zeus)
-                     current-prefix-arg))
-  (let* ((default-directory (file-name-as-directory dir))
-         (wrap-cmd  '("zeus" "console"))
-         (binding (iruby-get-default-interactive-binding)))
-    (unless (executable-find "zeus")
-      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
-    (iruby-console-wrap wrap-cmd "zeus" new)))
-
-;;;###autoload
-(defun iruby-console-rails (dir &optional new)
-  "Run Rails console in DIR."
-  (interactive (list (iruby-console-read-directory 'rails)
-                     interactive-prefix-arg))
-  (let* ((default-directory dir)
-         (env (iruby-console-rails-env))
-         (with-bundler (file-exists-p "Gemfile"))
-         (wrap-cmd '("rails" "console" "-e"))
-         (binding  (iruby-get-default-interactive-binding)))
-    (when with-bundler
-      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
-    (iruby-console-wrap wrap-cmd"rails" new)))
-
-(defun iruby-console-rails-env ()
-  (if (stringp iruby-console-environment)
-      iruby-console-environment
-    (let ((envs (iruby-console-rails-envs)))
-      (completing-read "Rails environment: "
-                       envs
-                       nil t
-                       nil nil (car (member "development" envs))))))
-
-(defun iruby-console-rails-envs ()
-  (let ((files (iruby-expand-files "config/environments/*.rb")))
-    (if (null files)
-        (error "No files in %s" (expand-file-name "config/environments/"))
-      (mapcar #'file-name-base files))))
-
-(defun iruby-console-hanami-p ()
-  (and (file-exists-p "config.ru")
-       (iruby-file-contents-match "config.ru" "\\_<run Hanami.app\\_>")))
-
-(defun iruby-console-hanami (dir &optional new)
-  "Run Hanami console in DIR."
-  (interactive (list (iruby-console-read-directory 'hanami)
-                     current-prefix-arg))
-  (let* ((default-directory (file-name-as-directory dir))
-         (env (iruby-console-hanami-env))
-         (with-bundler (file-exists-p "Gemfile"))
-         (wrap-cmd '("hanami" "console")))
-    (when with-bundler
-      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
-    (with-iruby-process-environment ((format "HANAMI_ENV=%s" env))
-      (iruby-console-wrap wrap-cmd "hanmai" new))))
-
-(defun iruby-console-hanami-env ()
-  (if (stringp iruby-console-environment)
-      iruby-console-environment
-    (let ((envs '("development" "test" "production")))
-      (completing-read "Hanami environment: "
-                       envs
-                       nil t
-                       nil nil (car (member "development" envs))))))
-
-;;;###autoload
-(defun iruby-console-gem (dir &optional new)
-  "Run IRB console for the gem in DIR.
-The main module should be loaded automatically.  If DIR contains a
-Gemfile, it should use the `gemspec' instruction."
-  (interactive (list (iruby-console-read-directory 'gem)
-                     current-prefix-arg))
-  (let* ((default-directory (file-name-as-directory dir))
-         ;; NB picking the first gemspec file here, if mutiple are available
-         (gemspec (car (iruby-expand-files "*.gemspec")))
-         (name  (iruby-file-contents-match
-                 gemspec "\\.name[ \t]*=[ \t]*['\"]\\([^'\"]+\\)['\"]" 1))
-         (args (when (file-directory-p "lib")
-                 (list "-I" "lib")))
-         (bind (iruby-get-default-interactive-binding))
-         wrapper)
-    (setq name
-          (format "gem(%s)"
-                  (cond
-                    (name (string-trim name))
-                    (t (file-name-sans-extension gemspec))))
-          wrapper (iruby-wrap-binding nil bind name))
-    (when args
-      (setf (iruby:interactive-args wrapper)
-            (append (iruby:interactive-args wrapper)
-                    args)))
-    ;; calling this directly here, due to the args append
-    (iruby-console-activate wrapper name new)))
-
-(defun iruby-console-racksh-p ()
-  (and (file-exists-p "Gemfile.lock")
-       (iruby-file-contents-match "Gemfile.lock" "^ +racksh ")))
-
-(defun iruby-console-racksh (dir &optional new)
-  "Run racksh in DIR."
-  (interactive (list (iruby-console-read-directory 'racksh)
-                     current-prefix-arg))
-  (let ((default-directory (file-name-as-directory dir)))
-    (iruby-console-wrap '("bundle" "exec" "rackish") "rackish" new)))
-
-(defun iruby-in-ruby-compilation-modes (mode)
-  "Check if MODE is a Ruby compilation mode."
-  (member mode '(rspec-compilation-mode
-                 ruby-compilation-mode
-                 projectile-rails-server-mode
-                 minitest-compilation-mode)))
-
-;;;###autoload
-(defun iruby-auto-enter ()
-  "Switch to `iruby-mode' if the breakpoint pattern matches the current line."
-  (when (and (iruby-in-ruby-compilation-modes major-mode)
-             (save-excursion
-               (beginning-of-line)
-               (re-search-forward iruby-breakpoint-pattern nil t)))
-    ;; Exiting excursion before this call to get the prompt fontified.
-    (iruby-switch-from-compilation)
-    (add-hook 'comint-input-filter-functions 'iruby-auto-exit nil t)))
-
-;;;###autoload
-(defun iruby-auto-exit (input)
-  "Return to the previous compilation mode if INPUT is a debugger exit command."
-  (when (iruby-in-ruby-compilation-modes iruby-orig-compilation-mode)
-    (if (member input '("quit\n" "exit\n" ""))
-        ;; After the current command completes, otherwise we get a
-        ;; marker error.
-        (run-with-idle-timer 0 nil #'iruby-maybe-switch-to-compilation))))
-
-(defun iruby-enable-auto-breakpoint ()
-  (interactive)
-  (add-hook 'compilation-filter-hook 'iruby-auto-enter))
-
-(defun iruby-disable-auto-breakpoint ()
-  (interactive)
-  (remove-hook 'compilation-filter-hook 'iruby-auto-enter))
-
-(defun iruby-console-script-p ()
-  (and (file-exists-p "Gemfile.lock")
-       (or
-        (file-exists-p "bin/console")
-        (file-exists-p "console")
-        (file-exists-p "console.rb"))))
-
-;;;###autoload
-(defun iruby-console-script (dir &optional new)
-  "Run custom bin/console, console or console.rb in DIR."
-  ;; FIXME the console cmd may need additional configuration for use
-  ;; under iruby
-  (interactive (list (iruby-console-read-directory 'script)
-                     current-prefix-arg))
-  (let ((default-directory (file-name-as-directory dir))
-        (wrap-cmd '("bundle" "exec"))
-        name)
-    (cond
-     ((file-exists-p "bin/console")
-      (setq wrap-cmd (append wrap-cmd (setq name "bin/console"))))
-     ((file-exists-p "console.rb")
-      (setq wrap-cmd (append wrap-cmd (list "ruby" (setq name "console.rb")))))
-     ((file-exists-p "console")
-      (setq wrap-cmd (append wrap-cmd (list (setq name "console"))))))
-    (cond
-      (name (iruby-console-wrap wrap-cmd name new))
-      (t (error "Found no console script in %S" dir)))))
-
-;;;###autoload
-(defun iruby-console-default (dir &optional new)
-  "Run Pry or the default iRuby as a bundler console in DIR"
-  (interactive (list (iruby-console-read-directory 'default)
-                     current-prefix-arg))
-  (let ((default-directory dir))
-    (cond
-      ((file-exists-p "Gemfile")
-       (let* ((project (file-name-nondirectory (directory-file-name dir)))
-              (name (format "console (%s)" project)))
-         (iruby-console-wrap '("bundle" "exec") name new)))
-      (t
-       (error "Unable to run a bundler console in a directory with no Gemfile")))))
-
-
-;;;###autoload
-(defun iruby-file-contents-match (file regexp &optional match-group)
-  (with-temp-buffer
-    (insert-file-contents file)
-    (when (re-search-forward regexp nil t)
-      (if match-group
-          (match-string match-group)
-        t))))
-
 (defun iruby-smie--forward-token ()
   (let ((inhibit-field-text-motion t))
     (ruby-smie--forward-token)))
@@ -3024,7 +2605,6 @@ Gemfile, it should use the `gemspec' instruction."
 (defun iruby-smie--backward-token ()
   (let ((inhibit-field-text-motion t))
     (ruby-smie--backward-token)))
-
 
 (defun iruby-load-desktop-support ()
   (interactive)
@@ -3045,4 +2625,8 @@ Gemfile, it should use the `gemspec' instruction."
 ;;;###autoload (dolist (mode (iruby-source-modes)) (add-hook (intern (format "%s-hook" mode)) 'iruby-minor-mode))
 
 (provide 'iruby)
+
+(require 'iruby-console)
+(require 'iruby-compile)
+
 ;;; iruby.el ends here
