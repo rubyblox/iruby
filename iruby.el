@@ -1335,7 +1335,7 @@ To run a ruby implementation not listed in `iruby-interactive-bindings',
 see also: `run-iruby'"
   (interactive
    (let* ((dir (if current-prefix-arg
-                   (iruby-read-dir "Start Ruby in directory: ")
+                   (iruby-read-directory "Start Ruby in directory: ")
                  ;; might return nil:
                  (iruby-console-find-dir)))
           (binding
