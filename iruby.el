@@ -144,25 +144,49 @@
                        :error (format ,message ,var))
            ,widget)))))
 
+(defvar iruby-load-file-history nil
+  "History data for interactive comint forms with `iruby-load-file'
+
+The bounds of this history table under `iruby-load-file' may be
+configured with `iruby-load-file-history-limit'")
+
+
 (defcustom iruby-load-file-history-limit history-length
-  "File name history liimit for `iruby-load-file'.
+  "File name history limit for `iruby-load-file-history'
 
 If zero, no file name history will be stored under `iruby-load-file'.
 
+If t, no bounds will be used on `iruby-directory-history'.
+
 The default initial value is derived from `history-length'"
-  :type `(integer
-          :validate
-          ,(with-iruby-widget-validate (len "Unable to parse history limit: %S")
-             (and (integerp len) (or (zerop len) (plusp len)))))
+  :type `(choice (integer
+                  :tag "Finite limit"
+                  :validate
+                  ,(with-iruby-widget-validate (len "Unable to parse history limit: %S")
+                     (and (integerp len) (or (zerop len) (plusp len)))))
+                 (const :tag "No limit" t))
   ;; TBD :group 'iruby-files
   :group 'iruby)
 
-(defcustom iruby-use-project-directories t
-  "configuration for `iruby-get-prevailing-buffer'
+(defvar iruby-directory-history nil
+  "History list for `iruby-read-directory'
 
-This variable determines whether to check for buffers specific to
-individual project directories under `iruby-get-prevailing-buffer'."
-  :type 'boolean
+See also, `iruby-directory-history-limit'")
+
+(defcustom iruby-directory-history-limit history-length
+  "history limit for `iruby-directory-history'.
+
+If zero, no new items will be added to `iruby-directory-history'.
+
+If t, no bounds will be used on `iruby-directory-history'.
+
+The default initial value is derived from `history-length'"
+  :type `(choice (integer
+                  :tag "Finite limit"
+                  :validate
+                  ,(with-iruby-widget-validate (len "Unable to parse history limit: %S")
+                     (and (integerp len) (or (zerop len) (plusp len)))))
+                 (const :tag "No limit" t))
   :group 'iruby)
 
 (defgroup iruby-ui nil
@@ -782,12 +806,6 @@ This keymap inherits bindings from `comint-mode-map'"
     ["Switch to REPL" iruby-switch-to-inf t]))
 
 
-(defvar iruby-load-file-history nil
-  "History data for interactive comint forms with `iruby-load-file'
-
-The bounds of this history table under `iruby-load-file' may be
-configured with `iruby-load-file-history-limit'")
-
 (defconst iruby-error-regexp-alist
   '(("^SyntaxError: \\(?:compile error\n\\)?\\([^\(].*\\):\\([1-9][0-9]*\\):" 1 2)
     ("^\tfrom \\([^\(].*\\):\\([1-9][0-9]*\\)\\(:in `.*'\\)?$" 1 2)))
@@ -862,12 +880,7 @@ The following commands are available:
  (defvar iruby-buffer nil
    "When non-nil, the iruby process buffer to use for this buffer.
 
-If nil and `iruby-use-project-directories' is non-nil, then the first
-Ruby buffer for the current project should be used.
-
-Else, `iruby-default-ruby-buffer' should be used.
-
-See also: `iruby-get-prevailing-buffer', `iruby-proc'"))
+See also: `iruby-get-active-buffer', `iruby-proc'"))
 
 (make-variable-buffer-local
  (defvar iruby-buffer-command nil "The command used to run Ruby shell"))
@@ -1232,13 +1245,7 @@ prompt - with recovery for any pending input - similar to the previous
 case.
 
 Otherwise, any input at the prompt will be sent to the iRuby process."
-  ;;
-  ;; FIXME may not be compat. with ruby 2.7?
-  ;; - needs debug & test w/ ruby 2.7 [sol]
-  ;; - FIXME update lang/ruby-platform port
-  ;;   to provide packages named e.g ruby30-platform
-  ;;   or ruby-platform (for that matching a default Ruby version on
-  ;;   the build host)
+  ;; TBD compat with ruby 2.7
   (interactive)
   (let* ((initial (point))
          (buffer-end (goto-char (point-max)))
@@ -1286,7 +1293,7 @@ Otherwise, any input at the prompt will be sent to the iRuby process."
             (throw 'buffer buffer)))))))
 
 (defun iruby-read-impl (&optional prompt)
-  "Read the name of an implementation in `iruby-implementations',
+  "Read the name of an implementation in `iruby-interactive-bindings',
 returning `iruby-default-implementation' if user has entered no text.
 
 PROMPT will default to the string, \"Ruby Implementation: \""
@@ -1300,8 +1307,10 @@ PROMPT will default to the string, \"Ruby Implementation: \""
 ;;; ad-hoc test
 ;; (iruby-read-impl)
 
+(require 'iruby-console-util)
+
 ;;;###autoload
-(defun iruby (&optional impl new name)
+(defun iruby (&optional impl new name dir)
   "Run or switch to a Ruby process.
 
 With prefix argument, prompts for which Ruby implementation to use, from
@@ -1322,28 +1331,37 @@ value.
 To run a ruby implementation not listed in `iruby-interactive-bindings',
 see also: `run-iruby'"
   (interactive
-   (let* ((binding (if current-prefix-arg
-                       (iruby-read-impl)
-                     (iruby-get-default-interactive-binding)))
-          (inst (iruby-get-interactive-binding binding)))
-     (list inst current-prefix-arg (iruby-impl-name inst))))
+   (let* ((dir (if current-prefix-arg
+                   (iruby-read-dir "Start Ruby in directory: ")
+                 (cdr (iruby-console-walk-dirs))))
+          (binding
+           (cond
+             (current-prefix-arg (iruby-read-impl))
+             (dir
+              (if (yes-or-no-p (format "Run Ruby with console? (%s) "
+                                       (abbreviate-file-name dir)))
+                  (iruby-console-impl dir)
+                (iruby-get-default-interactive-binding)))
+             (t (iruby-get-default-interactive-binding)))))
+     (list binding current-prefix-arg (iruby-impl-name binding) dir)))
   (let ((%impl (if (stringp impl)
                    (iruby-split-shell-string impl)
-                 impl)))
+                 impl))
+        (default-directory (or dir default-directory)))
     (run-iruby impl (or name (iruby-impl-name %impl)) new)))
 
 
-(defun iruby-get-prevailing-buffer (&optional no-filter-live)
+(defun iruby-get-active-buffer (&optional no-filter-live)
   "Return the active iRuby process buffer
 
-This function performs the following checks, in squence,
+This function performs the following checks, in sequence,
 returning the first available buffer:
 - the current buffer, if an `iruby-mode' buffer
 - any non-nil binding for `iruby-buffer'
-- if `iruby-use-project-directories' is true,
-  then the first buffer matched to a file for `iruby-console-match'
+- the first buffer matched to a directory for `iruby-console-match',
   beginning at the present `default-directory'
-- lastly, `iruby-default-ruby-buffer'
+- the `iruby-default-ruby-buffer'
+- the first matching buffer in `iruby-process-buffers'
 
 If `no-filter-live' is non-nil, then the iRuby process for the first
 matched buffer must not be a closed process. Otherwise, a buffer may
@@ -1364,59 +1382,59 @@ match irrespective of whether the buffer's iRuby process is running"
     (or (when (eq major-mode 'iruby-mode)
           (current-buffer))
         (check-buffer iruby-buffer)
-        (when iruby-use-project-directories
-          (let ((project-dir (locate-dominating-file default-directory
-                                                     #'iruby-console-match)))
-            (when project-dir
-              (check-buffer (iruby-directory-buffer project-dir)))))
+        (let ((project-dir (cdr (iruby-find-console-walk-dirs))))
+          (when project-dir
+            (cl-block found-one
+              ;; FIXME returns only the first matching buffer
+              (dolist (b (iruby-directory-buffer project-dir))
+                (when (check-buffer b)
+                  (cl-return-from found-one b))))))
         (check-buffer iruby-default-ruby-buffer)
         (cl-block last
           (dolist (elt iruby-process-buffers)
             (let ((b (cdr elt)))
               (when (check-buffer b)
-                (cl-return-from last b)))))
-        )))
+                (cl-return-from last b))))))))
 
 ;;;###autoload
 (defun run-iruby (&optional impl name new)
   "Run an inferior Ruby process, input and output in a buffer.
 
-If there is a process already running in a corresponding buffer,
-switch to that buffer. Otherwise create a new buffer.
-
-The consecutive buffer names will be:
-`*NAME*', `*NAME*<2>', `*NAME*<3>' and so on.
-
 IMPL may be an `iruby-interactive-binding' object, a string providing a
-shell command, or nil. If nil, the interactive implementation named in
+shell command, or nil. If nil, the interactive binding named in
 `iruby-default-interactive-binding' will be used.
 
-NAME defaults to the nondirectory filename of the first element in the
-command string
+For an IMPL provided as a shell command, NAME defaults to the
+nondirectory filename of the first element in the command string. If
+IMPL is provided as an `iruby-interactive-binding', NAME will be derived
+from the name of the interactive binding. If a new process is created
+and there is already a process matching NAME, the name will be appended
+with a suffix as with `generate-new-buffer-name'.
 
-If called interactively with a prefix argument, the user will be
-prompted to enter a shell command for launching the irb
-process. Otherwise under interactive evaluation, the shell command for
-`iruby-default-implementation' will be used.
+If NEW is nil, then if there is already a process running in a
+corresponding buffer, switch to that buffer. If NEW is non-nil or no
+corresponding buffer is found, a new process and corresponding buffer
+will be created.
+
+When called interactively, a shell command will be requested for the
+interactive Ruby implementation. If an empty shell command is entered,
+then the `iruby-default-interactive-binding' will be used. NAME will be
+derived from the provided shell command, or from the default interactive
+binding. The value of `current-prefix-arg' will be used as NEW.
 
 Runs the hooks `comint-mode-hook' and `iruby-mode-hook'.
 
-Type \\[describe-mode] in the process buffer for the list of commands.
-
-If NEW is non-nil, this will launch a new ruby process whether or
-not a ruby process is already running for the implementation denoted in
-the `command' value"
+Type \\[describe-mode] in the process buffer for the list of commands."
   ;; This function is interactive and named like this for consistency
   ;; with `run-python', `run-octave', `run-lisp' and so on.
   ;; We're keeping both it and `iruby' for backward compatibility.
   (interactive (let ((cmd (read-shell-command "Run ruby command: ")))
                  (cond
-                   ((or (null cmd) (zerop (length cmd)))
-                    (setq cmd nil))
+                   ((zerop (length cmd)) (setq cmd nil))
                    (t (setq cmd (iruby-split-shell-string cmd))))
                  (list cmd (iruby-impl-name cmd)
                        current-prefix-arg)))
-    (let ((buffer (unless new (iruby-get-prevailing-buffer))))
+    (let ((buffer (unless new (iruby-get-active-buffer))))
       (cond
         ((stringp impl)
          (setq impl (iruby-split-shell-string impl)))
@@ -1429,11 +1447,7 @@ the `command' value"
       (iruby-switch-to-process (iruby-buffer-process buffer))))
 
 (defun iruby-process-sentinel (process state)
-  "Process sentinel installed by `run-iruby-new'
-
-This function will display a warning after any change of state other
-than exit, hangup, or finished for a ruby subprocess initialized with
-`run-iruby-new'"
+  "A process sentinel installed by `run-iruby-new'"
   (let ((status (process-status process))
         (%state (or (ignore-errors (string-trim-right state))
                     state)))
@@ -1640,7 +1654,7 @@ evaluation of the BODY forms. This macro itself will not store the
   (list (if current-prefix-arg
             (iruby-read-process prompt require-live)
           (iruby-buffer-process
-           (iruby-get-prevailing-buffer (not require-live))))))
+           (iruby-get-active-buffer (not require-live))))))
 
 (defun iruby-switch-to-process (&optional process)
   "If the iRuby process buffer denoted by `process' is displayed in
@@ -1661,7 +1675,7 @@ See also:
                   (process (iruby-process-buffer process))
                   (buffer process)
                   (null
-                   (let ((it (iruby-get-prevailing-buffer)))
+                   (let ((it (iruby-get-active-buffer)))
                      (cond
                        (it it)
                        (t
@@ -1869,7 +1883,7 @@ restarted using `iruby-restart-process'."
   (interactive
    (list (if (or current-prefix-arg (null iruby-buffer))
              (iruby-read-process "Close iRuby process: ")
-           (iruby-buffer-process (iruby-get-prevailing-buffer t)))))
+           (iruby-buffer-process (iruby-get-active-buffer t)))))
   ;; This function itself will not modify `iruby-process-buffers'.
   ;;
   ;; Thus, a process that has been closed via this function may still
@@ -2036,7 +2050,7 @@ used"
 (defun iruby-proc (&optional noerr)
   "Return the inferior Ruby process for the current buffer or project.
 
-See also: `iruby-get-prevailing-buffer'"
+See also: `iruby-get-active-buffer'"
   ;; NB this API uses buffers as a primary point of reference.
   ;;
   ;; Although Emacs process objects are the primary point of I/O here,
@@ -2044,7 +2058,7 @@ See also: `iruby-get-prevailing-buffer'"
   ;; process objects
   (let ((buffer (if (eq major-mode 'iruby-mode)
                     (current-buffer)
-                  (iruby-get-prevailing-buffer))))
+                  (iruby-get-active-buffer))))
     (or (iruby-buffer-process buffer)
         (unless noerr
           (error "No current iRuby process.")))))
@@ -2279,8 +2293,8 @@ subsequent of the trimmed input.
 See also: `iruby-send-last-sexp'"
   (interactive (list (if interactive-prefix-arg
                          (iruby-read-process "Strip pending input for")
-                       (iruby-get-prevailing-buffer))))
-  (let ((use-buffer (or buffer (iruby-get-prevailing-buffer))))
+                       (iruby-get-active-buffer))))
+  (let ((use-buffer (or buffer (iruby-get-active-buffer))))
     (with-current-buffer use-buffer
       (when buffer
         (unless (eq major-mode 'iruby-mode)
@@ -2337,7 +2351,7 @@ displayed after the evaluation has returned."
         ;; ensuring that any pending input is stored
         (cl-destructuring-bind (start . end) bounds
           (let ((str (buffer-substring-no-properties start end))
-                (buff (iruby-get-prevailing-buffer)))
+                (buff (iruby-get-active-buffer)))
             (with-current-buffer buff
               (goto-char (iruby-strip-pending-input buff))
               (insert str)
@@ -2382,7 +2396,7 @@ This function updates the value of `iruby-default-ruby-buffer'
 
 See also: `iruby-use-process'"
   (interactive "P")
-  (let ((buffer (iruby-get-prevailing-buffer)))
+  (let ((buffer (iruby-get-active-buffer)))
     (if buffer
         (progn
           (pop-to-buffer buffer)
@@ -2432,7 +2446,7 @@ Then switch to the process buffer."
   "Load a Ruby file into the inferior Ruby process.
 
 The interactive form will store history data in the variable
-`iruby-load-file-history' when `iruby-load-file-hiistory-limit' is
+`iruby-load-file-history' when `iruby-load-file-history-limit' is
 non-zero.
 
 The file will be loaded by the active Ruby process for the current
@@ -2529,7 +2543,7 @@ Then switch to the process buffer."
 (provide 'iruby)
 
 (require 'iruby-complete)
-(require 'iruby-console)
 (require 'iruby-compile)
+(require 'iruby-console)
 
 ;;; iruby.el ends here

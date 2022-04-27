@@ -27,13 +27,6 @@
 
 (require 'iruby-util)
 
-(defmacro iruby-rconc (newcdr seq)
-  (with-symbols-iruby (new lst)
-    `(let* ((,new ,newcdr)
-            (,lst (last ,new)))
-       (rplacd (last ,seq) ,new)
-       (setq ,seq ,lst))))
-
 
 (defun iruby-irb-rl-arg (cmdlist)
   (let* ((output (shell-command-to-string
@@ -234,10 +227,10 @@ See also: `iruby-get-default-interactive-binding'"
   "Interface for a JRuby implementation of the Ruby language")
 
 (defun iruby:make-ruby-language-impl (name &rest initargs)
-  (apply 'iruby-ruby-impl :name name initargs))
+  (apply 'iruby-ruby-impl :name name :object-name name initargs))
 
 (defun iruby:make-jruby-language-impl (name &rest initargs)
-  (apply 'iruby-ruby-impl :name name initargs))
+  (apply 'iruby-ruby-impl :name name :object-name name initargs))
 
 ;; TBD rbenv x impl declarations here
 
