@@ -331,10 +331,9 @@ session name for the MATCH within the filesystem context DIR.
 The return value may generally be used for as a short tag for an iRuby
 process buffer"))
 
-(cl-defun iruby-console-find-dir (&key
-                                      match-call
-                                      (start default-directory)
-                                      (available iruby-console-tests))
+(cl-defun iruby-console-find-dir (&key match-call
+                                    (start default-directory)
+                                    (available iruby-console-tests))
   (cl-labels ((stop-dir-p (dir)
                 ;; NB this itself does not check if dir is "/"
                 (string-match-p locate-dominating-stop-dir-regexp dir))
@@ -378,6 +377,9 @@ process buffer"))
 (cl-defun iruby-console-wrap-dir (&optional
                                     (start default-directory)
                                     (available iruby-console-tests))
+  ;; note that this funnction is defined with &optional args
+  ;; as a thin interface for a similar function defined with &keyword
+  ;; args,
   (iruby-console-find-dir :match-call 'iruby-console-initialize-matched
                           :start start
                           :available available))

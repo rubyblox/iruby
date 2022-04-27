@@ -1344,7 +1344,7 @@ see also: `run-iruby'"
              (dir
               (if (yes-or-no-p (format "Run Ruby with console? (%s) "
                                        (abbreviate-file-name dir)))
-                  (or (iruby-console-wrap-dir :start dir)
+                  (or (iruby-console-wrap-dir dir)
                       ;; ^ should not return nil, typically
                       (iruby-get-default-interactive-binding))
                 (iruby-get-default-interactive-binding)))
