@@ -31,24 +31,6 @@
           (match-string match-group)
         t))))
 
-(defun iruby-console-wrapper (cmd name)
-  (let ((binding (iruby-get-default-interactive-binding)))
-    (iruby-wrap-binding cmd binding name)))
-
-(defun iruby-console-run (cmd name &optional new)
-  (when (stringp cmd)
-    (setq cmd (iruby-split-shell-string cmd)))
-  (let* ((exists (unless new
-                   (iruby-find-console-buffer)))
-         (exists-cmd (when exists
-                       (with-current-buffer exists
-                         iruby-buffer-command)))
-         (exists-same (equal cmd exists-cmd))
-         (wrapper (unless (and exists (not exists-same))
-                    (iruby-console-wrapper cmd name))))
-    (unless (and exists exists-same))
-      (run-iruby-new wrapper name)))
-
 ;;;###autoload
 (cl-defun iruby-console-auto (&optional (dir default-directory)
                                 new)
@@ -70,178 +52,17 @@ console"
   (interactive
    (list (iruby-read-directory "Run iRuby console in directory: ")
          current-prefix-arg))
-  (let* ((match (iruby-console-walk-dirs dir))
-         (type (car match))
-         (fun (when type (intern (format "iruby-console-%s" type)))))
-    (cond
-      ((null match)
-       (warn "iruby-console-auto: No console available for %s" dir)
-       (iruby))
-      ((fboundp fun)
-       (setq default-directory (cdr match))
-       (funcall fun dir new))
-      (t
-       (error "Console function not bound: %S" fun)))))
-
-
-;;;###autoload
-(defun iruby-console-zeus (dir &optional new)
-  "Run Rails console in DIR using Zeus."
-  (interactive (list (iruby-console-read-directory 'zeus)
-                     current-prefix-arg))
-  (let* ((default-directory (file-name-as-directory dir))
-         (wrap-cmd  '("zeus" "console"))
-         (binding (iruby-get-default-interactive-binding)))
-    (unless (executable-find "zeus")
-      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
-    (iruby-console-run wrap-cmd "zeus" new)))
-
-(defun iruby-console-rails-p ()
-  (and (file-exists-p "Gemfile.lock")
-       (iruby-file-contents-match "Gemfile.lock" "^ +railties ")
-       (file-exists-p "config/application.rb")
-       (iruby-file-contents-match "config/application.rb"
-                                  "\\_<Rails::Application\\_>")))
-;;;###autoload
-(defun iruby-console-rails (dir &optional new)
-  "Run Rails console in DIR."
-  (interactive (list (iruby-console-read-directory 'rails)
-                     interactive-prefix-arg))
-  (let* ((default-directory dir)
-         (env (iruby-console-rails-env))
-         (with-bundler (file-exists-p "Gemfile"))
-         (wrap-cmd '("rails" "console" "-e")) ;; TBD "-e" with no arg (??)
-         (binding  (iruby-get-default-interactive-binding)))
-    (when with-bundler
-      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
-    (iruby-console-run wrap-cmd "rails" new)))
-
-(defun iruby-console-rails-env ()
-  (if (stringp iruby-console-environment) ;; FIXME awkward API
-      iruby-console-environment
-    (let ((envs (iruby-console-rails-envs)))
-      (completing-read "Rails environment: "
-                       envs
-                       nil t
-                       nil nil (car (member "development" envs))))))
-
-(defun iruby-console-rails-envs () ;; FIXME awkward API naming
-  (let ((files (iruby-expand-files "config/environments/*.rb")))
-    (if (null files)
-        (error "No files in %s" (expand-file-name "config/environments/"))
-      (mapcar #'file-name-base files))))
-
-(defun iruby-console-hanami-p ()
-  (and (file-exists-p "config.ru")
-       (iruby-file-contents-match "config.ru" "\\_<run Hanami.app\\_>")))
-
-(defun iruby-console-hanami (dir &optional new)
-  "Run Hanami console in DIR."
-  (interactive (list (iruby-console-read-directory 'hanami)
-                     current-prefix-arg))
-  (let* ((default-directory (file-name-as-directory dir))
-         (env (iruby-console-hanami-env))
-         (with-bundler (file-exists-p "Gemfile"))
-         (wrap-cmd '("hanami" "console")))
-    (when with-bundler
-      (setq wrap-cmd (append '("bundle" "exec") wrap-cmd)))
-    (with-iruby-process-environment ((format "HANAMI_ENV=%s" env))
-      (iruby-console-run wrap-cmd "hanmai" new))))
-
-(defun iruby-console-hanami-env ()
-  (if (stringp iruby-console-environment)
-      iruby-console-environment
-    (let ((envs '("development" "test" "production")))
-      (completing-read "Hanami environment: "
-                       envs
-                       nil t
-                       nil nil (car (member "development" envs))))))
-
-;;;###autoload
-(defun iruby-console-gem (dir &optional new)
-  "Run IRB console for the gem in DIR.
-The main module should be loaded automatically.  If DIR contains a
-Gemfile, it should use the `gemspec' instruction."
-  (interactive (list (iruby-console-read-directory 'gem)
-                     current-prefix-arg))
-  (let* ((default-directory (file-name-as-directory dir))
-         ;; NB picking the first gemspec file here, if mutiple are available
-         (gemspec (car (iruby-expand-files "*.gemspec")))
-         (name  (iruby-file-contents-match
-                 gemspec "\\.name[ \t]*=[ \t]*['\"]\\([^'\"]+\\)['\"]" 1))
-         (args (when (file-directory-p "lib")
-                 (list "-I" "lib")))
-         (bind (iruby-get-default-interactive-binding))
-         wrapper)
-    (setq name
-          (format "gem(%s)"
-                  (cond
-                    (name (string-trim name))
-                    (t (file-name-sans-extension gemspec))))
-          wrapper (iruby-wrap-binding nil bind name))
-    (when args
-      (setf (iruby:interactive-args wrapper)
-            (append (iruby:interactive-args wrapper)
-                    args)))
-    ;; calling this directly here, due to the args append
-    (run-iruby-new wrapper name)))
-
-(defun iruby-console-racksh-p ()
-  (and (file-exists-p "Gemfile.lock")
-       (iruby-file-contents-match "Gemfile.lock" "^ +racksh")))
-
-(defun iruby-console-racksh (dir &optional new)
-  "Run racksh in DIR."
-  (interactive (list (iruby-console-read-directory 'racksh)
-                     current-prefix-arg))
-  (let ((default-directory (file-name-as-directory dir)))
-    (iruby-console-run '("bundle" "exec" "racksh") "racksh" new)))
-
-(defun iruby-console-script-p ()
-  (and (file-exists-p "Gemfile.lock")
-       (or
-        (file-exists-p "bin/console")
-        (file-exists-p "console")
-        (file-exists-p "console.rb"))))
-
-;;;###autoload
-(defun iruby-console-script (dir &optional new)
-  "Run custom bin/console, console or console.rb in DIR."
-  ;; FIXME the console cmd may need additional configuration for use
-  ;; under iruby
-  (interactive (list (iruby-console-read-directory 'script)
-                     current-prefix-arg))
-  (let ((default-directory (file-name-as-directory dir))
-        (wrap-cmd '("bundle" "exec"))
-        name)
-    (cond
-     ((file-exists-p "bin/console")
-      (setq wrap-cmd (append wrap-cmd (setq name "bin/console"))))
-     ((file-exists-p "console.rb")
-      (setq wrap-cmd (append wrap-cmd (list "ruby" (setq name "console.rb")))))
-     ((file-exists-p "console")
-      (setq wrap-cmd (append wrap-cmd (list (setq name "console"))))))
-    (cond
-      (name (iruby-console-run wrap-cmd name new))
-      (t (error "Found no console script in %S" dir)))))
-
-;;;###autoload
-(defun iruby-console-default (dir &optional new)
-  "Run Pry or the default iRuby as a bundler console in DIR"
-  (interactive (list (iruby-console-read-directory 'default)
-                     current-prefix-arg))
-  (let ((default-directory dir))
-    (cond
-      ((file-exists-p "Gemfile")
-       (let* ((project (file-name-nondirectory (directory-file-name dir)))
-              (name (format "console (%s)" project)))
-         (iruby-console-run '("bundle" "exec") name new)))
-      (t
-       (error "Unable to run a bundler console in a directory with no Gemfile")))))
+  (let* ((match (iruby-console-wrap-dir dir))
+         (start-dir
+          (if match
+              (iruby:impl-initial-dir match)
+            dir)))
+    (iruby (or match (iruby-get-default-interactive-binding))
+           new nil start-dir)))
 
 
 ;;
-;; base classes - iruby-console
+;; base classes - iruby-console in EIEIO
 ;;
 
 ;;
@@ -263,15 +84,31 @@ Gemfile, it should use the `gemspec' instruction."
 
 See also: `iruby:console-wrapper-args'"))
 
-
-(defclass iruby:console (iruby-wrapper-binding)
+(defclass iruby:console-mixin ()
   ((wrap-args
     :type list
     ;; TBD hopefully the class allocation is inherited by subclases in EIEIO
     :allocation :class
     :accessor iruby:console-wrapper-class-args
-    :documentation "Direct wrapper arguments for the console type")
+    :documentation "Direct wrapper arguments for the defined console type")
    ) ;; slots
+  :abstract t)
+
+(cl-defgeneric iruby:console-wrapper-args (console)
+  "Generic function for computing a shell command for iruby:console implementations
+
+The effective method should return a cons of a shell command name and
+zero or more shell command arguments, with each element as a string.
+This command list should be of a syntax for running the console
+implementation under comint"
+  (:method ((console iruby:console-mixin))
+    (let ((args (iruby:console-wrapper-class-args console)))
+      (when (cl-next-method-p)
+        (append args (cl-call-next-method))))))
+
+
+(defclass iruby:console (iruby:console-mixin iruby-wrapper-binding)
+  () ;; slots
   :abstract t)
 
 
@@ -305,23 +142,6 @@ See also: `iruby:console-wrapper-args'"))
 (defclass iruby:script-console (iruby:console)
   ()
   :abstract t)
-
-
-(cl-defgeneric iruby:console-wrapper-args (console)
-  "Generic function for computing a shell command for iruby:console implementations
-
-The effective method should return a cons of a shell command name and
-zero or more shell command arguments, with each element as a string.
-This command list should be of a syntax for running the console
-implementation under comint"
-  (:method ((console iruby:console))
-    "Default method, returning an empty list"
-    (let ((args (iruby:console-wrapper-class-args console)))
-      (when (cl-next-method-p)
-        (append args (cl-call-next-method)))))
-  ;; TBD does EIEIO really implement :around methods ...
-  ;; NB Of course not ! So that fairly breaks things here
-  )
 
 ;; test
 ;;   (iruby:console-wrapper-args (iruby:console-gem))
@@ -377,7 +197,7 @@ console type to be considered a match onto the contents of a project
 directory."
 ))
 
-(defclass iruby:console-test ()
+(defclass iruby:console-test (iruby:console-mixin)
   ((tag
     :initarg :tag
     :accessor iruby:console-test-tag
@@ -392,8 +212,6 @@ directory."
     :type (or string list))
    ) ;; slots
   )
-
-
 
 (defvar iruby-console-tests nil
   ;; FIXME expand the docs here
@@ -434,26 +252,26 @@ directory."
                      (when files
                        (cl-block first-matched
                          (dolist (globbed files first-match)
-                           (cond
-                             ((null re-tests)
-                              (setq first-match globbed))
-                             (first-match
-                              (cl-return-from first-matched first-match))
-                             (t
-                              (dolist (test re-tests)
-                                (cond
-                                  ;; NB this is generally used to
-                                  ;; parse for gems listed in
-                                  ;; Gemfile.lock.
-                                  ;;
-                                  ;; TMTOWTDI, e.g calling directly to
-                                  ;; some Ruby implementation to show
-                                  ;; what list of gems are being used in
-                                  ;; some Gemfile, once initialized,
-                                  ;; then matching on that list of gems
-                                  ((iruby-file-contents-match globbed test)
-                                   (setq first-match globbed))
-                                  (t (setq first-match nil)))))))))))))
+                           ,(if (null re-tests)
+                                `(cl-return-from first-matched globbed)
+                              `(cond
+                                 (first-match
+                                  (cl-return-from first-matched first-match))
+                                 (t
+                                  (dolist (test (quote ,re-tests))
+                                    (cond
+                                      ;; NB this is generally used to
+                                      ;; parse for gems listed in
+                                      ;; Gemfile.lock.
+                                      ;;
+                                      ;; TMTOWTDI, e.g calling directly to
+                                      ;; some Ruby implementation to show
+                                      ;; what list of gems are being used in
+                                      ;; some Gemfile, once initialized,
+                                      ;; then matching on that list of gems
+                                      ((iruby-file-contents-match globbed test)
+                                       (setq first-match globbed))
+                                      (t (setq first-match nil))))))))))))))
     (let ((console-class (intern (format "iruby:console-%s" type)))
           (test-class (intern (format "iruby:console-test-%s" type))))
     `(progn
@@ -495,6 +313,76 @@ directory."
        )))))
 
 
+(cl-defgeneric iruby:default-interactor-for (datum)
+  (:method (datum)
+    (iruby-get-default-interactive-binding datum)))
+
+
+(cl-defgeneric iruby:console-name-for (match dir)
+  (:method ((match iruby:console-test) (dir string))
+    (format "%s(%s)" (iruby:console-test-tag match)
+            (file-name-nondirectory (directory-file-name dir))))
+  (:documentation
+   "Compute a console session name
+
+Methods on this generic function should return a string, representing a
+session name for the MATCH within the filesystem context DIR.
+
+The return value may generally be used for as a short tag for an iRuby
+process buffer"))
+
+(cl-defun iruby-console-find-dir (&key
+                                      match-call
+                                      (start default-directory)
+                                      (available iruby-console-tests))
+  (cl-labels ((stop-dir-p (dir)
+                ;; NB this itself does not check if dir is "/"
+                (string-match-p locate-dominating-stop-dir-regexp dir))
+              (match-dir-p (dir)
+                (cl-block matching
+                  (dolist (test available)
+                    (let ((matched (iruby:console-match-p dir test)))
+                      (when matched
+                        (cl-return-from matching
+                          (wrap-console test dir)))))))
+              (wrap-console (matched-test dir)
+                (let ((retv
+                       (if match-call
+                           (funcall match-call matched-test dir)
+                         dir)))
+                  (throw 'matched retv)))
+              (check-dir (dir)
+                ;; when the parent directory is the same as dir, it's at
+                ;; the root directory of the filesystem
+                (or (match-dir-p dir)
+                    (let ((next (unless (stop-dir-p dir)
+                                  (file-name-directory (directory-file-name dir)))))
+                      (unless (or (null next) (equal next dir))
+                        (check-dir next))))))
+    (catch 'matched
+      (check-dir (expand-file-name start)))))
+
+
+(defun iruby-console-initialize-matched (matched-test dir)
+  (let* ((class (iruby:console-test-console-class matched-test))
+         (name (iruby:console-name-for matched-test dir))
+         (wrapper-args (iruby:console-wrapper-args matched-test))
+         (instance
+          (iruby-wrap-binding wrapper-args
+                              (iruby:default-interactor-for matched-test)
+                              name)))
+    ;; ensure the dir is set after the wrapper initialization
+    (setf (iruby:impl-initial-dir instance) dir)
+    instance))
+
+(cl-defun iruby-console-wrap-dir (&optional
+                                    (start default-directory)
+                                    (available iruby-console-tests))
+  (iruby-console-find-dir :match-call 'iruby-console-initialize-matched
+                          :start start
+                          :available available))
+
+
 ;;
 ;; default implementations - iruby-console
 ;;
@@ -503,17 +391,18 @@ directory."
 
 
 (define-iruby-console gem (iruby:gem-console)
-  "*.gemspec" ;; one glob, no Gemfile deps parse
-  )
+  ;; syntax: one glob, no Gemfile deps parse
+  "*.gemspec")
 
 (define-iruby-console gemfile (iruby:gemfile-console)
-  "Gemfile" ;; one filename, no Gemfile deps parse
-  )
+  ;; syntax: one filename, no Gemfile deps parse
+  "Gemfile" )
+
 
 (define-iruby-console rails (iruby:rails-console)
   ;; syntax of the following test expression is documented for
   ;; `iruby:console-test-test'
-  (("Gemfile.lock" "^[[:space::]]*railties\\>")
+  (("Gemfile.lock" "^[[:space:]]*railties\\>")
    ;; TBD what tool uses a 'config' path in rails (??)
    ("config/application.rb" "\\_<Rails::Application\\_>"))
   ;; FIXME compute "-e" <env> ...
@@ -532,15 +421,13 @@ directory."
   ;; TBD what tool uses a 'config.ru' path in hanmai (??)
   (("config.ru" "\\_<run Hanami.app\\_>")))
 
-
 (define-iruby-console racksh (iruby:gemfile-console)
-  (("Gemfile.lock" "^[[:space::]]*racksh\\>")))
+  (("Gemfile.lock" "^[[:space:]]*racksh\\>")))
 
 (define-iruby-console zeus (iruby:gemfile-console)
   ;; test syntax here: one filename regexp (no Gemfile deps parse)
   ".zeus.sock"
-  (:wrap-args "zeus" "console")
-  )
+  (:wrap-args "zeus" "console"))
 
 
 (provide 'iruby-console)

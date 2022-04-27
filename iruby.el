@@ -483,10 +483,13 @@ each item."
   :group 'iruby-impl
   :type '(repeat (choice
                   (object
-                   :objecttype iruby-ruby-impl :tag "Ruby implementation")
+                   :objecttype iruby-ruby-impl :tag "Ruby implementation"
+                   :match  (lambda (widget value) ;; ??
+                             (typep value 'iruby-ruby-impl)))
                   (object
-                   :objecttype iruby-jruby-impl :tag "JRuby implementation")
-                  )))
+                   :objecttype iruby-jruby-impl :tag "JRuby implementation"
+                   :match  (lambda (widget value) ;; ??
+                             (typep value 'iruby-jruby-impl))))))
 
 
 (defcustom iruby-interactive-bindings
@@ -998,7 +1001,7 @@ once that feature has become available in this Emacs session")))
         comint-use-prompt-regexp nil)
   (set (make-local-variable 'compilation-error-regexp-alist)
        iruby-error-regexp-alist)
-  (set (make-local-variable 'comint-prompt-read-only) iruby-prompt-read-only)
+  ;; (set (make-local-variable 'comint-prompt-read-only) iruby-prompt-read-only)
   (when (eq system-type 'windows-nt)
     (setq comint-process-echoes t))
   (add-hook 'completion-at-point-functions 'iruby-completion-at-point nil t)
@@ -1333,14 +1336,17 @@ see also: `run-iruby'"
   (interactive
    (let* ((dir (if current-prefix-arg
                    (iruby-read-dir "Start Ruby in directory: ")
-                 (cdr (iruby-console-walk-dirs))))
+                 ;; might return nil:
+                 (iruby-console-find-dir)))
           (binding
            (cond
              (current-prefix-arg (iruby-read-impl))
              (dir
               (if (yes-or-no-p (format "Run Ruby with console? (%s) "
                                        (abbreviate-file-name dir)))
-                  (iruby-console-impl dir)
+                  (or (iruby-console-wrap-dir :start dir)
+                      ;; ^ should not return nil, typically
+                      (iruby-get-default-interactive-binding))
                 (iruby-get-default-interactive-binding)))
              (t (iruby-get-default-interactive-binding)))))
      (list binding current-prefix-arg (iruby-impl-name binding) dir)))
@@ -1379,10 +1385,11 @@ match irrespective of whether the buffer's iRuby process is running"
                     buffer
                   (when (process-live-p (iruby-buffer-process buffer))
                     buffer)))))
+
     (or (when (eq major-mode 'iruby-mode)
           (current-buffer))
         (check-buffer iruby-buffer)
-        (let ((project-dir (cdr (iruby-find-console-walk-dirs))))
+        (let ((project-dir (iruby-console-find-dir)))
           (when project-dir
             (cl-block found-one
               ;; FIXME returns only the first matching buffer

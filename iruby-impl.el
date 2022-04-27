@@ -20,6 +20,7 @@
 
 (require 'eieio)
 (require 'eieio-base)
+(require 'eieio-custom)
 
 ;;
 ;; utility forms for iruby-impl.el
@@ -97,10 +98,20 @@
         (t (prin1-to-string bin))))))
 
 
-(cl-defgeneric iruby-impl-bin (datum))
-(cl-defgeneric iruby-impl-requires (datum))
-(cl-defgeneric iruby-impl-args (datum))
+(cl-defgeneric iruby-impl-bin (impl))
+;; NB indirection for deriving the bin from the iruby-impl-name
+;; such as when the %iruby-impl-bin on the instance is nil
+(cl-defgeneric %iruby-impl-bin (impl))
+(cl-defgeneric (setf iruby-impl-bin) (new-value impl))
 
+(cl-defgeneric iruby-impl-requires (impl))
+(cl-defgeneric (setf iruby-impl-requires) (new-value impl))
+
+(cl-defgeneric iruby-impl-args (impl))
+(cl-defgeneric (setf iruby-impl-args) (new-value impl))
+
+(cl-defgeneric iruby:impl-initial-dir (impl))
+(cl-defgeneric (setf iruby:impl-initial-dir) (new-value impl))
 
 (defclass iruby-impl (eieio-named)
   ;; NB this class schema could be translated to a gsettings schema
@@ -121,8 +132,9 @@
     :label "Command binary name"
     :initform nil
     :type (or string null)
-    :custom (choice (string :tag "Command name or path")
-                    (const :tag "Use implementation name" nil))
+    :custom (choice
+             (string :tag "Command name or path")
+             (const :tag "Use implementation name" nil))
     :documentation
     "Implementation command name or path
 
@@ -161,6 +173,20 @@ object representing this Ruby language of the implementation, and should
 return a list of strings to use as literal argument values. This list
 will be effectively joined with any other elements provided in the args
 specifier")
+   (initial-dir
+    ;; in defcustom buffers, this would show up as an editable lisp form.
+    ;;
+    ;; in actuality, that lisp form is the initiform for the slot.
+    ;;
+    ;; the efective slot value type is 'string'
+    :initarg :initial-dir
+    :accessor iruby:impl-initial-dir
+    :initform default-directory
+    ;; :type string ;; eieio fails on this, also in subclasses
+    :custom (sexp :tag "Initial Directory (if static)")
+    :documentation
+    "Default directory for processes initialized for this Ruby"
+    )
    ) ;; slots
   ;; NB not exacctly a CLOS-like syntax in the class option with eieio
   :documentation "Base class for definitions of iRuby implementations"
@@ -696,11 +722,12 @@ See also: `iruby-get-default-implementation' and
   (:method ((wrapper string) base &optional name)
     (iruby-wrap-binding (iruby-split-shell-string wrapper) base name))
   (:method ((wrapper list) (base iruby-interactive-binding) &optional name)
-    (let* ((bin (car wrapper))
-           (inst (iruby-wrapper-binding
-                  :wrapper-base-cmd wrapper
-                  :name (or name (file-name-nondirectory bin)))))
+    (let ((bin (car wrapper))
+          (inst (iruby-wrapper-binding)))
       (iruby:initialize-instance-from inst base)
+      ;; set slot values post-init ...
+      (setf (iruby:wrapper-base-cmd inst) wrapper)
+      (setf (iruby-impl-name inst) (or name (file-name-nondirectory bin)))
       inst)))
 
 
