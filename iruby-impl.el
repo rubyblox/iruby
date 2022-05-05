@@ -583,16 +583,6 @@ See also: `iruby-get-default-implementation' and
 (defun iruby:make-pry-cmd (name &rest args)
   (apply 'iruby-pry-binding :name name args))
 
-(defun iruby-get-cmd (datum &optional noerr)
-  (cl-etypecase datum
-    (string (or (cl-find datum iruby-interactive-bindings
-                  :key #'iruby-impl-name
-                  :test #'string=)
-                (if noerr
-                    nil
-                  (error "No implementation found for name %S" datum))))
-    (iruby-interactive-binding impl)))
-
 (cl-defgeneric iruby:parse-cmd (datum)
   (:method ((datum cons))
     (let* ((ptr (list nil))
