@@ -557,18 +557,11 @@ cmdline for this slot's value.")
 
 This function uses the variable `iruby-default-interactive-binding'.
 
-See also: `iruby:get-default-implementation' and
-`iruby:get-interactive-cmd'"
+See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
   (iruby:get-interactive-binding
    (or context iruby-default-interactive-binding)))
 
 ;; (iruby:get-default-interactive-binding)
-
-(cl-defgeneric iruby:get-interactive-cmd (datum)
-  (:method ((datum string))
-    (iruby-parse-cmd (iruby:get-interactive-binding datum)))
-  (:method ((datum iruby:interactive-binding))
-    (iruby-parse-cmd iruby:interactive-binding)))
 
 
 (cl-defgeneric iruby:get-initial-environment (datum)

@@ -111,9 +111,7 @@ See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
                   (progn
                     (warn "no iruby-buffer-command saved in desktop data for %s. \
 Using current defaults for %s" name iruby-default-implementation )
-                    (iruby:get-interactive-cmd iruby-default-implementation))))
-         ;; FIXME an implementation object cannot be stored here
-         ;; and there is no cl-make-load-form in emacs.
+                    (iruby:parse-cmd iruby-default-implementation))))
         (impl (or (cdr (assq 'iruby-buffer-impl desktop-buffer-locals))
                   (cdr (assq :impl data))
                   ;; FIXME this would not retrieve the implementation
