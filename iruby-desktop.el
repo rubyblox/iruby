@@ -111,7 +111,7 @@ See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
                   (progn
                     (warn "no iruby-buffer-command saved in desktop data for %s. \
 Using current defaults for %s" name iruby-default-implementation )
-                    (iruby:parse-cmd iruby-default-implementation))))
+                    (iruby:parse-cmd (iruby-get-default-interactive-binding)))))
         (impl (or (cdr (assq 'iruby-buffer-impl desktop-buffer-locals))
                   (cdr (assq :impl data))
                   ;; FIXME this would not retrieve the implementation
@@ -119,13 +119,17 @@ Using current defaults for %s" name iruby-default-implementation )
                   ;; suffixed with a version specifier
                   (progn
                     (warn "No implementation stored for %s" name)
-                    (file-name-nondiredtory cmd))))
+                    (iruby:impl-name cmd))))
         (dir (or (cdr (assq 'default-directory desktop-buffer-locals))
                  (cdr (assq :dir data))
                  default-directory))
         (default-p (cdr (assq :default-p data)))
         (mapped (or (cdr (assq :mapped data))
                     (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
+
+    (set (make-variable-buffer-local 'iruby-buffer-impl)
+         (or (iruby:get-interactive-binding impl t)
+             (iruby:get-default-interactive-binding nil)))
 
     (unless (boundp 'erm-full-parse-p)
       ;; FIXME this is a hack for enh-ruby-mode, such that may err
@@ -143,8 +147,7 @@ Using current defaults for %s" name iruby-default-implementation )
       ;; is called, to some side effect as such? or may it be a side
       ;; effect of with-temp-buffer?
       (setq default-directory dir)
-      (let* ((procbuff (run-iruby-new cmd impl)) ;; point of call NB
-             ;; (FIXME needs environment bindings)
+      (let* ((procbuff (run-iruby-new cmd impl))
              (proc (get-buffer-process procbuff))
              (exp-dir (expand-file-name dir)))
         (when mapped
@@ -157,8 +160,8 @@ Using current defaults for %s" name iruby-default-implementation )
           (push '(:default-p . t)  iruby-mapped-misc-data))
        (iruby-send-string proc
                            (format "puts(%%q(# iRuby chdir to %s))" dir))
-        (iruby-send-string proc
-                           (format "Dir.chdir(%%q(%s))" exp-dir))))))
+       (iruby-send-string proc
+                          (format "Dir.chdir(%%q(%s))" exp-dir))))))
 
 (defun iruby-desktop-misc-data (deskdir)
   "Callback function for `desktop-save' under iRuby process buffers
@@ -201,7 +204,9 @@ See also:
                   (cdr last-mapped) new-last
                   last-mapped new-last)))))
 
-    (append (list (cons :impl iruby-buffer-impl)
+    (append (list (cons :impl (iruby:impl-name iruby-buffer-impl))
+                  ;; This will store the iruby-buffer-command
+                  ;; separate to the iruby-buffer-impl
                   (cons :cmd iruby-buffer-command)
                   (cons :dir default-directory)
                   (cons :mapped (cdr mapped)))

@@ -83,7 +83,6 @@
         ;; fallback - no value substitution here
         (t (prin1-to-string bin))))))
 
-
 (cl-defgeneric iruby:impl-bin (impl))
 ;; NB indirection for deriving the bin from the iruby:impl-name
 ;; such as when the %iruby:impl-bin on the instance is nil
@@ -270,7 +269,7 @@ See also: `iruby:get-default-interactive-binding'"
       (when seq (apply 'concat seq)))))
 
 (cl-defgeneric iruby:interactive-completion-expr (datum)
-  (:method (datum)i
+  (:method (datum)
     ;; FIXME consider parsing for functions here,
     ;; assuming some implementation object for the
     ;; first arg to each
