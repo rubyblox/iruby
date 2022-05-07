@@ -1296,8 +1296,6 @@ PROMPT will default to the string, \"Ruby Implementation: \""
 ;;; ad-hoc test
 ;; (iruby-read-impl)
 
-(require 'iruby-console-util)
-
 ;;;###autoload
 (defun iruby (&optional impl new name dir)
   "Run or switch to a Ruby process.

@@ -19,7 +19,6 @@
   (require 'cl-macs))
 
 (require 'iruby-util)
-(require 'iruby-console-util)
 (require 'iruby)
 
 ;;;###autoload
@@ -59,6 +58,53 @@ console"
             dir)))
     (iruby (or match (iruby:get-default-interactive-binding))
            new nil start-dir)))
+
+
+;;
+;; utility forms
+;;
+
+(defsubst iruby-expand-files (path &optional full)
+  "expand any glob patterns in PATH, returning a list of file pathnames
+
+PATH should contain a literal pathname expression or a pathname
+expression including glob patterns.
+
+If FULL is non-nil, a list of absolute pathnames will be returned. By
+default, pathnames will be returned as relative to PATH.
+
+This function will ensure that any autosave files or symbolic links to
+noneixstent files will not be present in the returned list of
+pathnames.
+
+The syntax for PATH would be that used in `file-expand-wildcards'"
+  (cl-remove-if 'auto-save-file-name-p
+                (cl-remove-if-not 'file-exists-p
+                                  (file-expand-wildcards path))))
+
+
+(cl-defun iruby-find-console-buffer (&optional (dir default-directory) name)
+  (let* ((dir-attrs (or (file-attributes dir 'integer)
+                        (error "Directory not found: %s" dir)))
+         (dir-device (file-attribute-device-number dir-attrs))
+         (dir-ino (file-attribute-inode-number dir-attrs)))
+    (catch 'search
+      (cl-dolist (elt iruby-process-buffers)
+        (let ((buff (cdr elt)))
+          (when (buffer-live-p buff)
+            (with-current-buffer buff
+              (and (if name (equal name (iruby:impl-name iruby-buffer-impl))
+                     t)
+                   (let* ((o-attrs (file-attributes default-directory
+                                                    'integer))
+                          (o-device (when o-attrs
+                                      (file-attribute-device-number o-attrs)))
+                          (o-ino (when o-attrs
+                                   (file-attribute-inode-number o-attrs))))
+                     (and o-attrs
+                          (= o-device dir-device)
+                          (= o-ino dir-ino)))
+                   (throw 'search buff)))))))))
 
 
 ;;
