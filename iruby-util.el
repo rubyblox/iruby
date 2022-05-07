@@ -18,12 +18,22 @@
 (eval-when-compile
   (require 'cl-macs))
 
-(defmacro iruby-rconc (newcdr seq)
+
+(defsubst iruby:split-shell-string (str)
+  (cond
+    ((or (> emacs-major-version 28)
+         (and (= emacs-major-version 28) (>= emacs-minor-version 1)))
+     (split-string-shell-command str))
+    (t (split-string-and-unquote str))))
+
+
+(defmacro iruby:rconc (newcdr seq)
   (with-symbols-iruby (new lst)
     `(let* ((,new ,newcdr)
             (,lst (last ,new)))
        (rplacd (last ,seq) ,new)
        (setq ,seq ,lst))))
+
 
 (cl-defmacro with-symbols-iruby ((&rest symbols) &body body)
   ;; an alternative to the common `with-gensym' pattern,
@@ -35,7 +45,8 @@
                  symbols)
      ,@body))
 
-(defmacro iruby-rconc (newcdr seq)
+
+(defmacro iruby:rconc (newcdr seq)
   (with-symbols-iruby (new lst)
     `(let* ((,new ,newcdr)
             (,lst (last ,new)))
@@ -43,8 +54,7 @@
        (setq ,seq ,lst))))
 
 
-
-(defun iruby-same-file (file-a file-b)
+(defun iruby:same-file-p (file-a file-b)
   "Return true if file-a and file-b represent the same physical
 filesystem object.
 
@@ -60,10 +70,10 @@ This function will not dereference symbolic links"
         (= f-a-ino f-b-ino)))))
 
 ;;; ad-hoc test
-;; (iruby-same-file (expand-file-name "iruby.el") "iruby.el")
-;; (iruby-same-file (expand-file-name "irubyx.el") "iruby.el")
+;; (iruby:same-file-p (expand-file-name "iruby.el") "iruby.el")
+;; (iruby:same-file-p (expand-file-name "irubyx.el") "iruby.el")
 
-(defun iruby-read-directory (prompt)
+(defun iruby:read-directory (prompt)
   (let* ((dir (read-file-name prompt nil nil t nil 'file-directory-p))
          (use-dir
           (if (zerop (length dir))
@@ -74,5 +84,6 @@ This function will not dereference symbolic links"
        (add-to-history 'iruby-directory-history use-dir
                        iruby-directory-history-limit))
     use-dir))
+
 
 (provide 'iruby-util)

@@ -52,7 +52,7 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
         (let ((buff (cdr elt)))
           (when (buffer-live-p buff)
             (with-current-buffer buff
-              (and (if name (equal name (iruby-impl-name iruby-buffer-impl))
+              (and (if name (equal name (iruby:impl-name iruby-buffer-impl))
                      t)
                    (let* ((o-attrs (file-attributes default-directory
                                                     'integer))

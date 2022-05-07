@@ -129,6 +129,7 @@
 
 (require 'iruby-util)
 
+
 (defgroup iruby nil
   "Run Ruby process in a buffer"
   :group 'languages)
@@ -169,7 +170,7 @@ The default initial value is derived from `history-length'"
   :group 'iruby)
 
 (defvar iruby-directory-history nil
-  "History list for `iruby-read-directory'
+  "History list for `iruby:read-directory'
 
 See also, `iruby-directory-history-limit'")
 
@@ -446,21 +447,6 @@ Used by these commands to determine defaults."
   :group 'iruby)
 
 
-(defcustom iruby-irb-impl-args '("-r" "irb" "-e" "IRB.start" "--")
-  "List of arguments for the ruby implementation, for initializing irb
-
-Generally, this list should include the string \"--\" as a trailing
-element. Arguments after that string would be provided as arguments
-to irb, such as under a direct call to ruby"
-  :type '(repeat string)
-  :group 'iruby-impl)
-
-(defcustom iruby-irb-args '("-r" "irb/completion" "--inf-ruby-mode")
-  "List of arguments for irb"
-  :type '(repeat string)
-  :group 'iruby-impl)
-
-
 (defcustom iruby-ruby-language-impls
   (list (iruby:make-ruby-language-impl "ruby")
         (iruby:make-jruby-language-impl "jruby")
@@ -474,7 +460,7 @@ to irb, such as under a direct call to ruby"
 
 This variable provides a list of Ruby language implementations for
 iRuby. Each element of the list is generally an instance of some
-subclass of `iruby-ruby-language-impl'.
+subclass of `iruby:ruby-language-impl'.
 
 The fields of each element in this list and the list itself can be
 edited in the `customize-option' buffer for this variable. Documentation
@@ -483,13 +469,13 @@ each item."
   :group 'iruby-impl
   :type '(repeat (choice
                   (object
-                   :objecttype iruby-ruby-impl :tag "Ruby implementation"
-                   :match  (lambda (widget value) ;; ??
-                             (typep value 'iruby-ruby-impl)))
+                   :objecttype iruby:ruby-impl :tag "Ruby implementation"
+                   :match  (lambda (widget value)
+                             (typep value 'iruby:ruby-impl)))
                   (object
-                   :objecttype iruby-jruby-impl :tag "JRuby implementation"
-                   :match  (lambda (widget value) ;; ??
-                             (typep value 'iruby-jruby-impl))))))
+                   :objecttype iruby:jruby-impl :tag "JRuby implementation"
+                   :match  (lambda (widget value)
+                             (typep value 'iruby:jruby-impl))))))
 
 
 (defcustom iruby-interactive-bindings
@@ -508,21 +494,21 @@ each item."
       ;; one of each interactive iRuby kind, using the default base-ruby
       (cl-destructuring-bind (initfn . inter-name) inter
         (let ((new (funcall initfn inter-name)))
-          (iruby-rconc (list new) nxt))))
+          (iruby:rconc (list new) nxt))))
     (dolist (impl iruby-ruby-language-impls (cdr dflt))
-      (let ((impl-name (iruby-impl-name impl)))
+      (let ((impl-name (iruby:impl-name impl)))
         (dolist (in if)
           ;; one interactive impl for each interactive iRuby kind
           ;; and each defined base-ruby
           (cl-destructuring-bind (initfn . inter-name) in
             (let ((new (funcall initfn (format "%s-%s" impl-name inter-name)
                                 :base-ruby impl-name)))
-              (iruby-rconc (list new) nxt)))))))
+              (iruby:rconc (list new) nxt)))))))
   "Definitions for interactive Ruby applications in iRuby
 
 This variable provides a list of interactive Ruby language
 implementations. Each element of the list is generally an instance of
-some subclass of `iruby-interactive-binding'.
+some subclass of `iruby:interactive-binding'.
 
 The fields of each element in this list and the list itself can be
 edited in the `customize-option' buffer for this variable. Documentation
@@ -530,7 +516,7 @@ would be available in that buffer, as to the syntax and applications of
 each item."
   :group 'iruby-impl
   :type '(repeat (choice
-                  (object :objecttype iruby-irb-binding  :tag "IRB"
+                  (object :objecttype iruby:irb-binding  :tag "IRB"
                    :eieio-show-name t)
                   ;; FIXME the tag actually shown in the custom buffer,
                   ;; for each object under this choice widget, may not
@@ -542,7 +528,7 @@ each item."
                   ;; for the custom widgets, together with the
                   ;; 'eieio-named' class
                   (object
-                   :objecttype iruby-pry-binding :tag "Pry"
+                   :objecttype iruby:pry-binding :tag "Pry"
                    :eieio-show-name t)
                   )))
 
@@ -565,21 +551,21 @@ Info node `(elisp)Directory Local Variables' and the Info node
 See also: `iruby-default-interactive-binding'
 
 In a detail of the iRuby API: This value is used by the function
-`iruby-get-default-implementation'.  That function which may be used
+`iruby:get-default-implementation'.  That function which may be used
 whether individually or as a symbol, such as for a provider function to
 the `:base-ruby' initialization argument of any subclass of the base
-class, `iruby-interactive-binding'. The EIEIO classes `iruby-pry-binding'
-and `iruby-irb-binding' are provided as default implementations of this
+class, `iruby:interactive-binding'. The EIEIO classes `iruby:pry-binding'
+and `iruby:irb-binding' are provided as default implementations of this
 base class, in iRuby.
 
 The value may then be retrieved from the initialized instance, via the
 `iruby:interactive-base-ruby' accessor on that instance.
 
 This would be used generally in the orchestration of the function
-`iruby:parse-cmd' for an `iruby-interactive-binding' object."
+`iruby:parse-cmd' for an `iruby:interactive-binding' object."
   :type (cons 'choice (mapcar #'(lambda (impl)
-                                  (let* ((name (iruby-impl-name impl))
-                                         (bin (%iruby-impl-bin impl))
+                                  (let* ((name (iruby:impl-name impl))
+                                         (bin (%iruby:impl-bin impl))
                                          (tag (if bin
                                                   (format "%s (%s)" name bin)
                                                 name)))
@@ -591,7 +577,7 @@ This would be used generally in the orchestration of the function
 (defcustom iruby-default-interactive-binding "irb"
   "Which interactive Ruby binding to use in iRuby, if none is specified.
 
-This value should denote the `iruby-impl-name' of an iRuby
+This value should denote the `iruby:impl-name' of an iRuby
 interactive binding initialized in the custom variable
 `iruby-interactive-bindings'
 
@@ -601,7 +587,7 @@ this custom value should be either \"irb\" or \"pry\" respectively.
 Other values may serve to denote the name of any initialized interactive
 binding in the custom variable `iruby-interactive-bindings'. Each of the
 latter values may provide a specific implementation of the class
-`iruby-interactive-binding' e.g  for irb or pry, as to use a specific
+`iruby:interactive-binding' e.g  for irb or pry, as to use a specific
 `iruby-language-impl' as a base ruby, e.g ruby, jruby, or macruby.
 
 For purposes of project configuration, this variable may be bound
@@ -612,7 +598,7 @@ Info node `(elisp)Directory Local Variables' and the Info node
 See also: The custom variables `iruby-default-implementation',
 `iruby-ruby-language-impls', and `iruby-interactive-bindings' "
     :type (cons 'choice (mapcar #'(lambda (impl)
-                                  (let* ((name (iruby-impl-name impl))
+                                  (let* ((name (iruby:impl-name impl))
                                          (base
                                           (iruby:interactive-base-ruby impl))
                                          (tag (format "%s (%s, %s)"
@@ -661,7 +647,7 @@ literal shell command name or absolute path for a shell command name"
   :type `(string
           :validate
           ,(with-iruby-widget-validate (cmd "Command not found, in %s")
-             (ignore-errors (executable-find (car (iruby-split-shell-string cmd))))))
+             (ignore-errors (executable-find (car (iruby:split-shell-string cmd))))))
   :group 'iruby-proc)
 
 
@@ -1302,10 +1288,10 @@ returning `iruby-default-implementation' if user has entered no text.
 PROMPT will default to the string, \"Ruby Implementation: \""
   (let ((name
          (completing-read (or prompt "Ruby Implementation: ")
-                          (mapcar #'iruby-impl-name iruby-interactive-bindings)
+                          (mapcar #'iruby:impl-name iruby-interactive-bindings)
                           nil t nil nil iruby-default-interactive-binding)))
     (cl-find name iruby-interactive-bindings
-      :test #'equal :key #'iruby-impl-name)))
+      :test #'equal :key #'iruby:impl-name)))
 
 ;;; ad-hoc test
 ;; (iruby-read-impl)
@@ -1335,26 +1321,26 @@ To run a ruby implementation not listed in `iruby-interactive-bindings',
 see also: `run-iruby'"
   (interactive
    (let* ((dir (if current-prefix-arg
-                   (iruby-read-directory "Start Ruby in directory: ")
+                   (iruby:read-directory "Start Ruby in directory: ")
                  ;; might return nil:
-                 (iruby-console-find-dir)))
+                 (cdr (iruby-console-find :match-initialize nil))))
           (binding
            (cond
              (current-prefix-arg (iruby-read-impl))
              (dir
               (if (yes-or-no-p (format "Run Ruby with console? (%s) "
                                        (abbreviate-file-name dir)))
-                  (or (iruby-console-wrap-dir dir)
+                  (or (iruby-console-find :start dir)
                       ;; ^ should not return nil, typically
-                      (iruby-get-default-interactive-binding))
-                (iruby-get-default-interactive-binding)))
-             (t (iruby-get-default-interactive-binding)))))
-     (list binding current-prefix-arg (iruby-impl-name binding) dir)))
+                      (iruby:get-default-interactive-binding))
+                (iruby:get-default-interactive-binding)))
+             (t (iruby:get-default-interactive-binding)))))
+     (list binding current-prefix-arg (iruby:impl-name binding) dir)))
   (let ((%impl (if (stringp impl)
-                   (iruby-split-shell-string impl)
+                   (iruby:split-shell-string impl)
                  impl))
         (default-directory (or dir default-directory)))
-    (run-iruby impl (or name (iruby-impl-name %impl)) new)))
+    (run-iruby impl (or name (iruby:impl-name %impl)) new)))
 
 
 (defun iruby-get-active-buffer (&optional no-filter-live)
@@ -1389,7 +1375,7 @@ match irrespective of whether the buffer's iRuby process is running"
     (or (when (eq major-mode 'iruby-mode)
           (current-buffer))
         (check-buffer iruby-buffer)
-        (let ((project-dir (iruby-console-find-dir)))
+        (let ((project-dir (cdr (iruby-console-find :match-initialize nil))))
           (when project-dir
             (cl-block found-one
               ;; FIXME returns only the first matching buffer
@@ -1407,13 +1393,13 @@ match irrespective of whether the buffer's iRuby process is running"
 (defun run-iruby (&optional impl name new)
   "Run an inferior Ruby process, input and output in a buffer.
 
-IMPL may be an `iruby-interactive-binding' object, a string providing a
+IMPL may be an `iruby:interactive-binding' object, a string providing a
 shell command, or nil. If nil, the interactive binding named in
 `iruby-default-interactive-binding' will be used.
 
 For an IMPL provided as a shell command, NAME defaults to the
 nondirectory filename of the first element in the command string. If
-IMPL is provided as an `iruby-interactive-binding', NAME will be derived
+IMPL is provided as an `iruby:interactive-binding', NAME will be derived
 from the name of the interactive binding. If a new process is created
 and there is already a process matching NAME, the name will be appended
 with a suffix as with `generate-new-buffer-name'.
@@ -1438,15 +1424,15 @@ Type \\[describe-mode] in the process buffer for the list of commands."
   (interactive (let ((cmd (read-shell-command "Run ruby command: ")))
                  (cond
                    ((zerop (length cmd)) (setq cmd nil))
-                   (t (setq cmd (iruby-split-shell-string cmd))))
-                 (list cmd (iruby-impl-name cmd)
+                   (t (setq cmd (iruby:split-shell-string cmd))))
+                 (list cmd (iruby:impl-name cmd)
                        current-prefix-arg)))
     (let ((buffer (unless new (iruby-get-active-buffer))))
       (cond
         ((stringp impl)
-         (setq impl (iruby-split-shell-string impl)))
+         (setq impl (iruby:split-shell-string impl)))
         ((null impl)
-         (setq (iruby-get-default-interactive-binding))))
+         (setq (iruby:get-default-interactive-binding))))
       (when (or new (not (and buffer
                               (buffer-live-p buffer)
                               (iruby-process-running-p buffer))))
@@ -1598,33 +1584,37 @@ See also: Customization for `iruby-minor-mode-prefix', `iruby-app-name'"
 ;; utility forms (iruby-proc)
 ;;
 
-(cl-defmacro with-iruby-process-environment ((&rest bindings)
+(cl-defmacro with-iruby-process-environment ((&optional impl &rest bindings)
                                              &rest body)
-  "evaluate BODY in a lexical environment with a process environment for iRuby
+  "evaluate BODY in an environment configured for a process environment
 
-Each element in BINDINGS should be provided as a literal string or a
-form that will evalute to either a string or nil value. Each non-nil
-value will be prepended to a modified form of the current value of
-`process-environment', overriding any values bound in the latter. The
-modified `process-environment' value will have a PAGER binding prepended
-for `iruby-pager', previous to prepending any values from BINDINGS.
+In applications, this macro will establish a local binding for the
+Emacs variable `process-environment', then evaluating the BODY forms
+within that Emacs Lisp environment.
 
-The value used for the effective `process-environment' in this form
-should be inherited by any subprocess initialized by Emacs, in
-evaluation of the BODY forms. This macro itself will not store the
-`process-environment' value, external to that lexical environment."
+IMPL will be evaluted as the first argument for a call to the EIEIO
+generic function `iruby:get-initial-environment'.
+
+Each element in BINDINGS should be a literal string or a form that will
+evalute to either a string or nil value. Each non-nil value in BINDINGS
+will be prepended to the value returned by the EIEIO generic function
+`iruby:get-initial-environment' as called on the provided IMPL. In
+effect, any provided BINDINGs will override any value returned by
+`iruby:get-initial-environment'
+
+For any process initialized as with comint or shell exec, the process
+should then inherited the `process-environment' configured with this
+macro."
   `(let ((process-environment
           (append
            (remove-if 'null (list ,@bindings))
-           (cons (format "PAGER=%s" iruby-pager)
-                 ;; http://debbugs.gnu.org/15775
-                 (cl-remove-if (lambda (binding)
-                                 (equal (car (split-string binding "=")) "PAGER"))
-                               process-environment)))))
+           (iruby:get-initial-environment ,impl))))
      ,@body))
 
-;; (with-iruby-process-environment () (shell-command-to-string "echo -n $PAGER"))
-;; => string value of iruby-pager
+;; (let ((iruby-pager "false")) (with-iruby-process-environment () (shell-command-to-string "echo -n $PAGER")))
+;; => "false" (when evaluated with BASH or similar)
+;; (with-iruby-process-environment (nil "PAGER=true") (shell-command-to-string "echo -n $PAGER"))
+;; => "true" (when evaluted in an SH-like shell)
 
 ;;
 ;; interactive forms (for iruby-proc)
@@ -1983,7 +1973,7 @@ will be seleted by `iruby-read-process-interactive'"
         (iruby-close-process process)
         ;; This calls `comint-exec' directly, without reinitilizing the
         ;; buffer as within `run-iruby-new'
-        (with-iruby-process-environment ()
+        (with-iruby-process-environment (impl)
           (setq usebuff
                 (comint-exec buff (process-name process)
                              (car cmd) nil (cdr cmd))
@@ -2007,7 +1997,7 @@ will be seleted by `iruby-read-process-interactive'"
 
 COMMAND is the command to call. This value may be provided as a string
 or as a list of a command name and literal arguments. If provdied as a
-string, the string will be tokenized with `iruby-split-shell-string'
+string, the string will be tokenized with `iruby:split-shell-string'
 when provdied to comint.
 
 NAME will be used for creating a name for the buffer. If NAME is not
@@ -2015,15 +2005,15 @@ provided, the nondirectory part of the first element in COMMAND will be
 used"
   (let* ((commandlist
           (cl-etypecase command
-            (iruby-interactive-binding (iruby:parse-cmd command))
-            (string (iruby-split-shell-string command))
+            (iruby:interactive-binding (iruby:parse-cmd command))
+            (string (iruby:split-shell-string command))
             (cons command)))
          (name (or name (cl-typecase command
-                          ((or iruby-interactive-binding cons)
-                           (iruby-impl-name command))
-                          (t (iruby-impl-name commandlist)))))
+                          ((or iruby:interactive-binding cons)
+                           (iruby:impl-name command))
+                          (t (iruby:impl-name commandlist)))))
          (impl (cl-typecase command
-                 (iruby-interactive-binding command)
+                 (iruby:interactive-binding command)
                  (t commandlist)))
          (buffer-name (generate-new-buffer-name (format "*%s*" name)))
          (buffer (get-buffer-create buffer-name))
@@ -2032,7 +2022,7 @@ used"
          (syntax (car (iruby-find-syntax)))
          process)
 
-    (with-iruby-process-environment ()
+    (with-iruby-process-environment (impl)
       (apply 'make-comint-in-buffer
              name buffer
              (car commandlist) nil (cdr commandlist))
@@ -2044,7 +2034,7 @@ used"
     (set-buffer buffer)
     (iruby-mode) ;; may reset any buffer-local variables
     (iruby-initialize-impl-bindings (cl-typecase command
-                                      (iruby-interactive-binding command)
+                                      (iruby:interactive-binding command)
                                       (t name))
                                     syntax)
     (iruby-remember-ruby-buffer buffer)

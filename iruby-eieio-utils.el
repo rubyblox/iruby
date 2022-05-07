@@ -2,7 +2,7 @@
 
 ;; this file is not a package file
 
-(defun iruby-class-slot-initargs (class)
+(defun iruby:class-slot-initargs (class)
   (let* ((cls (cl-etypecase class
                 (symbol (find-class class))
                 (eieio--class class)))
@@ -18,12 +18,19 @@
                     (list (cons sl-nm in-args)))))
               (eieio-class-slots cls)))))
 
-(defun iruby-slot-initargs (slot class)
+(defun iruby:slot-initargs (slot class)
   (let ((sl (cl-etypecase slot
               (symbol slot)
               (cl-slot-descriptor (cl--slot-descriptor-name slot))))
-        (in (iruby-class-slot-initargs class)))
+        (in (iruby:class-slot-initargs class)))
     (cdr (assq sl in))))
 
-;; (iruby-slot-initargs 'requires 'iruby-impl)
+;; (iruby:slot-initargs 'requires 'iruby:impl)
 ;; => (:requires)
+
+(defsubst iruby:initarg-slot (initarg cls)
+  (let ((map (eieio--class-initarg-tuples (iruby:ensure-class cls))))
+    (cdr (assq initarg map))))
+
+;; (iruby:initarg-slot :tag 'iruby:console-test)
+;; => tag
