@@ -466,7 +466,12 @@ directory."
                 (or (match-dir-p dir)
                     (let ((next (unless (stop-dir-p dir)
                                   (file-name-directory (directory-file-name dir)))))
-                      (unless (or (null next) (equal next dir))
+                      ;; for dir "/" next => "/" (*nix pathnames)
+                      (unless (or (null next) (equal next dir)
+                                  ;; ensure nexr dir is readable,
+                                  ;; e.g w/ termux on Android where
+                                  ;; /data/data/ is not readable
+                                  (not (file-readable-p next)))
                         (check-dir next))))))
     (catch 'matched
       (check-dir (expand-file-name start)))))
