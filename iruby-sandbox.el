@@ -113,14 +113,13 @@
   ;; ^ it's a cl-slot-descriptor
 
 
-  (cl--slot-descriptor-name
-   (cl-svref (cl--class-slots (find-class 'iruby-wrapper-binding))
-             )
+  ;; (cl--slot-descriptor-name
+  ;;  (cl-svref (cl--class-slots (find-class 'iruby-wrapper-binding))
+  ;;            )
 
   (cl--class-slots (find-class 'iruby-wrapper-binding))
-  (cl-int
-)
 
+)
 
 
 ;; iruby:impl - tests towards iruby:initialize-wrap
