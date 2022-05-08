@@ -29,6 +29,8 @@
 (require 'iruby-util)
 
 
+(eval-when-compile
+
 (defsubst iruby:ensure-class (which)
   (cl-etypecase which
     (symbol (find-class which t))
@@ -42,6 +44,7 @@
   (cl-map 'list 'cl--slot-descriptor-name
           (cl--class-slots use-cls))))
 
+) ;; eval-when-compile
 
 (defun iruby:get-readline-arg (cmdlist)
   (let* ((output (shell-command-to-string
@@ -86,21 +89,21 @@
         ;; fallback - no value substitution here
         (t (prin1-to-string bin)))))
   (:method ((datum buffer))
-    "Return the `iruby:impl-name' for a non-nil variable `iruby-buffer-impl'
+    "Return the `iruby:impl-name' for a non-nil variable `iruby-buffer-interactor'
 in BUFFER, else nil
 
-If the `iruby-buffer-impl' for BUFFER is non-nil yet the `iruby:impl-name'
+If the `iruby-buffer-interactor' for BUFFER is non-nil yet the `iruby:impl-name'
 for that implementation is nil, this will return a string computed from
 the buffer name for BUFFER.
 
 This method should return nil only in instancs when BUFFER is not a live
-buffer, or when BUFFER has a null `iruby-buffer-impl'. Otherwise, this
+buffer, or when BUFFER has a null `iruby-buffer-interactor'. Otherwise, this
 mehod should return an implementation name for some interactive Ruby
 environment in BUFFER"
     (when (buffer-live-p datum)
       (with-current-buffer datum
-        (when iruby-buffer-impl
-          (or (iruby:impl-name iruby-buffer-impl)
+        (when iruby-buffer-interactor
+          (or (iruby:impl-name iruby-buffer-interactor)
               (format "unknown(%s)" (buffer-name buffer))))))))
 
 (cl-defgeneric iruby:impl-bin (impl))
@@ -118,7 +121,7 @@ environment in BUFFER"
 (cl-defgeneric iruby:impl-initial-dir (impl))
 (cl-defgeneric (setf iruby:impl-initial-dir) (new-value impl))
 
-(defclass iruby-impl (eieio-named)
+(defclass iruby:impl (eieio-named)
   ;; NB this class schema could be translated to a gsettings schema
   ;; for broader IDE applications
   ((name
@@ -204,10 +207,6 @@ specifier")
   :abstract t)
 
 
-;; insufficient ..
-;; (cl-defmethod eieio-object-name-string ((obj iruby-impl))
-;;   (iruby:impl-name obj))
-
 (defun iruby:get-default-implementation (&optional context)
   "Return the default `iruby:ruby-language-impl' object.
 
@@ -223,7 +222,7 @@ See also: `iruby:get-default-interactive-binding'"
           :test #'string=)
         (if noerr nil
           (error "No implementation found for name %S" datum))))
-  (:method ((impl iruby-impl) &optional noerr)
+  (:method ((impl iruby:impl) &optional noerr)
     impl))
 
 ;; (iruby:get-language-impl "ruby")
@@ -233,8 +232,8 @@ See also: `iruby:get-default-interactive-binding'"
 
 ;; TBD: iruby:get-tools-impl (cmd) ... (yard/rdoc, erb, rbs, rake, ...)
 
-(cl-defmethod iruby:impl-bin ((datum iruby-impl))
-  ;; NB applicable for any iruby-impl
+(cl-defmethod iruby:impl-bin ((datum iruby:impl))
+  ;; NB applicable for any iruby:impl
   (or (%iruby:impl-bin datum)
       (iruby:impl-name datum)))
 
@@ -248,10 +247,11 @@ See also: `iruby:get-default-interactive-binding'"
 (cl-defmethod iruby:impl-args ((datum string))
   (iruby:impl-args (iruby:get-language-impl datum)))
 
-(defclass iruby:ruby-language-impl (iruby-impl)
-  ;; FIXME provide a subclass integrating with solargraph, via eglot
+(defclass iruby:ruby-language-impl (iruby:impl)
+  ;; FIXME provide a subclass integrating with solargraph,
+  ;; via eglot (non-interactive)
   ;;
-  ;; see also: ssh-agency [melpa]
+  ;; see also: ssh-agency [melpa] and rake console classes in iRuby
   ()
   :abstract t)
 
@@ -301,7 +301,7 @@ See also: `iruby:get-default-interactive-binding'"
 
 (cl-defgeneric iruby:interactive-prompt-mode (datum))
 
-(defclass iruby:interactive-binding (iruby-impl)
+(defclass iruby:interactive-binding (iruby:impl)
   ((base-ruby
     :initform 'iruby:get-default-implementation
     :initarg :base-ruby
@@ -550,7 +550,7 @@ cmdline for this slot's value.")
         (when (stringp base)
           (setq base (iruby:get-language-impl base noerr)))
         (cond
-          ((typep base 'iruby-impl) base)
+          ((iruby:impl-p datum) base)
           (noerr nil)
           (t (error "No iRuby ruby implementation found for name %S" base)))))))
 
@@ -634,7 +634,7 @@ See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
   (:method ((datum string))
     ;; FIXME this prevents any reuse for "normal command strings"
     (iruby:parse-cmd (iruby:get-interactive-binding datum)))
-  (:method ((datum iruby-impl))
+  (:method ((datum iruby:impl))
     (let* ((bin (iruby:impl-bin datum))
            (req (iruby:impl-requires datum))
            (base-arg-specs (iruby:impl-args datum))
@@ -658,7 +658,7 @@ See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
                            (iruby:get-language-impl base-impl)))
                   (function
                    (iruby:parse-cmd (funcall base-impl datum)))
-                  (iruby-impl (iruby:parse-cmd base-impl))))
+                  (iruby:impl (iruby:parse-cmd base-impl))))
            ;; NB no further indirection onto the base impl here
            (addl-base-args (iruby:interactive-base-args datum))
            (req (iruby:impl-requires datum))

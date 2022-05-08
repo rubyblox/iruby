@@ -21,48 +21,20 @@
 (require 'iruby-util)
 (require 'iruby)
 
-;;;###autoload
-(defun iruby-file-contents-match (file regexp &optional match-group)
+
+;;
+;; utility forms
+;;
+
+(eval-when-compile
+
+(defsubst iruby-file-contents-match (file regexp &optional match-group)
   (with-temp-buffer
     (insert-file-contents file)
     (when (re-search-forward regexp nil t)
       (if match-group
           (match-string match-group)
         t))))
-
-;;;###autoload
-(cl-defun iruby-console-auto (&optional (dir default-directory)
-                                new)
-  "Run the appropriate Ruby console command, or the default iRuby
-
-The command and the directory to run it from are detected
-automatically.
-
-If an iRuby buffer exists for DIR, that buffer will be selected, else a
-new iRuby process will be created.
-
-If no matching project files can be found, this will run the default
-iRuby implementation, with `default-directory' set to DIR.
-
-If called interactively, the selected buffer's `default-directory' will
-be used as DIR unless called with a prefix argument. If called with a
-prefix argument, the user will be asked to select a directory for the
-console"
-  (interactive
-   (list (iruby:read-directory "Run iRuby console in directory: ")
-         current-prefix-arg))
-  (let* ((match (iruby-console-find dir))
-         (start-dir
-          (if match
-              (iruby:impl-initial-dir match)
-            dir)))
-    (iruby (or match (iruby:get-default-interactive-binding))
-           new nil start-dir)))
-
-
-;;
-;; utility forms
-;;
 
 (defsubst iruby-expand-files (path &optional full)
   "expand any glob patterns in PATH, returning a list of file pathnames
@@ -82,67 +54,83 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
                 (cl-remove-if-not 'file-exists-p
                                   (file-expand-wildcards path))))
 
+) ;; eval-when-compile
+
 
 (cl-defun iruby-find-console-buffer (&optional (dir default-directory) impl)
+  ;; Caveats & Docs (FIXME needs docstring)
+  ;;
+  ;; - This assumes DIR exists and is readable, but does not assume as
+  ;;   much about the initial-dir in each console buffer
+  ;;
+  ;; - If IMPL is provided (non-nil) it should be either an iruby:impl
+  ;;   or a string, will be used for a name match to each iruby:console,
+  ;;   before testing for a filesystem match onto DIR
+  ;;
+  ;; - If an IMPL is not provided, then the matching console buffer must
+  ;;   match only for the impl-initial-dir in the buffer, as
+  ;;   representing the same filesystem object as DIR. In this test for
+  ;;   file equivalence, each dir must exist and be readable, also
+  ;;   stored on the same filesystem device, furthermore having the sime
+  ;;   file inode number as accessible in Emacs, for each dir in the
+  ;;   test. This test will be limited to all live buffers in
+  ;;   `iruby-process-buffers'. The fist buffer with a matching
+  ;;   impl-initial-dir and (if provided) matching impl will be returned
+  ;;
+  ;; - This function does not check for buffers in containing
+  ;;   directories.
+  ;;
+  ;; - This function may be called with a dir as returned from, e.g
+  ;;
+  ;;    (cdr (iruby-console-create some-dir :match-initialize nil))
+  ;;
+  ;;   If that value is non-nil, it would provide a value for the DIR
+  ;;   argument to this function, representing the first containing
+  ;;   project directory of SOME-DIR
+  ;;
   (let* ((dir-attrs (or (file-attributes dir 'integer)
                         (error "Directory not found: %s" dir)))
          (dir-device (file-attribute-device-number dir-attrs))
          (dir-ino (file-attribute-inode-number dir-attrs))
          (name
           (typecase impl
-            (iruby-impl (iruby:impl-name impl))
+            (iruby:impl (iruby:impl-name impl))
             (t impl))))
     (catch 'search
       (cl-dolist (elt iruby-process-buffers)
         (let ((buff (cdr elt)))
           (when (buffer-live-p buff)
             (with-current-buffer buff
-              (and (if name (equal name (iruby:impl-name iruby-buffer-impl))
+              (and (if name (equal name (iruby:impl-name iruby-buffer-interactor))
                      t)
-                   (iruby:console-p iruby-buffer-impl) ;; in BUFF
-                   (let* ((o-attrs (file-attributes default-directory
-                                                    'integer))
-                          (o-device (when o-attrs
-                                      (file-attribute-device-number o-attrs)))
-                          (o-ino (when o-attrs
-                                   (file-attribute-inode-number o-attrs))))
-                     (and o-attrs
-                          (= o-device dir-device)
-                          (= o-ino dir-ino)))
-                   (throw 'search buff)))))))))
+                   (iruby:console-p iruby-buffer-interactor) ;; in BUFF
+                   (let ((dir (iruby:impl-initial-dir iruby-buffer-interactor)))
+                     (when (and (file-exists-p dir) (file-readable-p dir))
+                       (let* ((o-attrs (file-attributes dir 'integer))
+                              (o-device (when o-attrs
+                                          (file-attribute-device-number o-attrs)))
+                              (o-ino (when o-attrs
+                                       (file-attribute-inode-number o-attrs))))
+                         (and o-attrs
+                              (= o-device dir-device)
+                              (= o-ino dir-ino)))
+                       (throw 'search buff)))))))))))
 
 
 ;;
 ;; base classes - iruby-console in EIEIO
 ;;
-
-;;
-;; NB although Emacs Lisp may not in itself implement any concept of
-;; package namespaces, this API uses a naming convention similar that
-;; for exported symbols in Common Lisp packages, e.g <package>:<name>
-;;
-;; This may serve to differentiate any functions that may be derived
-;; from the API classes for iRuby, in EIEIO - e.g #'iruby:console -
-;; juxtaposed to normal Emacs Lisp commands and general API functions,
-;; in the iRuby implementation for Emacs Lisp.
-;;
-;; FIXME the iruby-impl API should be updated for a similar class/method
-;; naming convention for iRuby in EIEIO
-
-
-;;
-;; binding wrappers
-;;
-;; e.g for bundle exec under the console functions from inf-ruby
+;; after the console API in inf-ruby
 ;;
 
 (defclass iruby-wrapper-binding (iruby:interactive-binding)
   ((wrapper-base-impl
     :accessor iruby:wrapper-base-impl
     :initarg :wrapper-base-impl
-    :type iruby-impl)))
+    :type iruby:impl)))
 
 (cl-defgeneric iruby:initialize-instance-from (inst other)
+  ;; FIXME remove, no longer used
   (:method ((inst iruby-wrapper-binding) (other iruby:interactive-binding))
     (let ((inst-sl (iruby:class-slots (class-of inst)))
           (other-sl (iruby:class-slots (class-of other))))
@@ -152,16 +140,6 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
                              :test #'eq)
                inst)
         (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))
-
-
-
-(cl-defgeneric iruby:initialize-wrap (class base &rest initargs)
-  (:method ((class eieio--class)
-            (base iruby:interactive-binding) &rest initargs)
-    (let ((inst (apply 'make-instance (eieio--class-name class)
-                       initargs)))
-      (iruby:initialize-instance-from inst base)
-      inst)))
 
 
 (cl-defgeneric iruby:console-kind (datum)
@@ -229,12 +207,7 @@ running the console implementation under comint"
   :abstract t)
 
 (cl-defmethod iruby:parse-cmd ((datum iruby:console))
-  (append (or (iruby:console-prefix-cmd datum)
-              ;; reached, when it should not be:
-              (progn (warn "NULL prefix cmd in %S" datum) ;; DEBUG
-                     nil))
-          ;;; include any comand for the effective interactor class (TBD
-          ;; (when (cl-next-method-p) (cl-call-next-method))
+  (append (iruby:console-prefix-cmd datum)
           (iruby:parse-cmd (iruby:wrapper-base-impl datum))
           (iruby:console-append-args datum)))
 
@@ -439,11 +412,17 @@ directory."
     ;; used in iruby-console-initialize-matched
     (iruby:get-default-interactive-binding iruby-default-interactive-binding)))
 
-(cl-defun iruby-console-find (&key
+(cl-defun iruby-console-create (&key
                                 (start default-directory)
                                 (tests iruby-console-tests)
                                 (match-initialize
                                  'iruby-console-initialize-matched))
+  ;; NB if called with default initargs and some project directory can
+  ;; be found at or containing the START dir, then this function will
+  ;; always create and return a newly initialized interactor object.
+  ;;
+  ;; To locate any initialized interactor for a dir, see also:
+  ;; `iruby-find-console-buffer'
   (cl-labels ((stop-dir-p (dir)
                 ;; NB this itself does not check if dir is "/"
                 (string-match-p locate-dominating-stop-dir-regexp dir))
@@ -478,15 +457,15 @@ directory."
 
 
 (defun iruby-console-initialize-matched (matched-test dir)
+  ;; NB DIR may be used in later calls with console-match predicate functions
  (let* ((class (iruby:ensure-class
                 (iruby:console-test-console-class matched-test)))
         (base (iruby:default-interactor-for matched-test))
         ;; (extra-initargs (iruby:console-class-initargs class)) ;; TBD ...
         (instance (make-instance (eieio--class-name class)
-                                 :wrapper-base-impl base)))
-
-   ;; ensure the dir is set after the wrapper initialization
-   (setf (iruby:impl-initial-dir instance) dir)
+                                 :wrapper-base-impl base
+                                 :initial-dir dir)))
+   ;; set an impl name for the console
    (setf (iruby:impl-name instance)
          (format "%s(%s %s)" (iruby:console-kind instance)
                  (file-name-nondirectory (directory-file-name dir))

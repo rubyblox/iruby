@@ -19,27 +19,11 @@
   (require 'cl-macs))
 
 
-(defsubst iruby:split-shell-string (str)
-  (cond
-    ((or (> emacs-major-version 28)
-         (and (= emacs-major-version 28) (>= emacs-minor-version 1)))
-     (split-string-shell-command str))
-    (t (split-string-and-unquote str))))
-
-
-(defmacro iruby:rconc (newcdr seq)
-  (with-symbols-iruby (new lst)
-    `(let* ((,new ,newcdr)
-            (,lst (last ,new)))
-       (rplacd (last ,seq) ,new)
-       (setq ,seq ,lst))))
-
+(eval-when-compile
 
 (cl-defmacro with-symbols-iruby ((&rest symbols) &body body)
   ;; an alternative to the common `with-gensym' pattern,
   ;; this does not use gensym.
-  ;;
-  ;; FIXME use more often, here - other make-symbol forms
   `(let ,(mapcar #'(lambda (s)
                      `(,s (make-symbol ,(concat "%" (symbol-name s)))))
                  symbols)
@@ -53,6 +37,15 @@
        (rplacd (last ,seq) ,new)
        (setq ,seq ,lst))))
 
+(defsubst iruby:split-shell-string (str)
+  (cond
+    ((or (> emacs-major-version 28)
+         (and (= emacs-major-version 28) (>= emacs-minor-version 1)))
+     (split-string-shell-command str))
+    (t (split-string-and-unquote str))))
+
+
+) ;; eval-when-compile
 
 (defun iruby:same-file-p (file-a file-b)
   "Return true if file-a and file-b represent the same physical

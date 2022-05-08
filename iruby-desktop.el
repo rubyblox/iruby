@@ -112,7 +112,7 @@ See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
                     (warn "no iruby-buffer-command saved in desktop data for %s. \
 Using current defaults for %s" name iruby-default-implementation )
                     (iruby:parse-cmd (iruby-get-default-interactive-binding)))))
-        (impl (or (cdr (assq 'iruby-buffer-impl desktop-buffer-locals))
+        (impl (or (cdr (assq 'iruby-buffer-interactor desktop-buffer-locals))
                   (cdr (assq :impl data))
                   ;; FIXME this would not retrieve the implementation
                   ;; name if the ruby impl. command is prefixed or
@@ -127,7 +127,7 @@ Using current defaults for %s" name iruby-default-implementation )
         (mapped (or (cdr (assq :mapped data))
                     (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
 
-    (set (make-variable-buffer-local 'iruby-buffer-impl)
+    (set (make-variable-buffer-local 'iruby-buffer-interactor)
          (or (iruby:get-interactive-binding impl t)
              (iruby:get-default-interactive-binding nil)))
 
@@ -176,7 +176,7 @@ buffer as the current buffer, during `desktop-save'.
 
 This function returns an associative list representing a mapping for
 the following values in the current iruby-mode buffer:
-- :impl => `iruby-buffer-impl', needed for later restoring
+- :impl => `iruby-buffer-interactor', needed for later restoring
    any implementation-specific bindings under `iruby-initialize-impl-bindings'
 - :cmd => `iruby-buffer-command' i.e for the original process
 - :dir => `default-directory' for the buffer, in Emacs
@@ -204,9 +204,9 @@ See also:
                   (cdr last-mapped) new-last
                   last-mapped new-last)))))
 
-    (append (list (cons :impl (iruby:impl-name iruby-buffer-impl))
+    (append (list (cons :impl (iruby:impl-name iruby-buffer-interactor))
                   ;; This will store the iruby-buffer-command
-                  ;; separate to the iruby-buffer-impl
+                  ;; separate to the iruby-buffer-interactor
                   (cons :cmd iruby-buffer-command)
                   (cons :dir default-directory)
                   (cons :mapped (cdr mapped)))

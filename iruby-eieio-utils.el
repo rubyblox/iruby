@@ -28,9 +28,13 @@
 ;; (iruby:slot-initargs 'requires 'iruby:impl)
 ;; => (:requires)
 
+(eval-when-compile
+
 (defsubst iruby:initarg-slot (initarg cls)
   (let ((map (eieio--class-initarg-tuples (iruby:ensure-class cls))))
     (cdr (assq initarg map))))
+
+) ;; eval-when-compile
 
 ;; (iruby:initarg-slot :tag 'iruby:console-test)
 ;; => tag

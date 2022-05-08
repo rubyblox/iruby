@@ -875,9 +875,9 @@ See also:  `iruby-use-process', `iruby-proc', and the variable
 (make-variable-buffer-local
  (defvar iruby-buffer-command nil "The command used to run Ruby shell"))
 
-(defvar iruby-buffer-impl nil
+(defvar iruby-buffer-interactor nil
   "Implementation for a Ruby process buffer")
-(make-variable-buffer-local 'iruby-buffer-impl)
+(make-variable-buffer-local 'iruby-buffer-interactor)
 
 (defun iruby-initialize-impl-bindings (&optional impl syntax)
   ;; shared forms for `iruby-mode' (e.g under `run-iruby-new')
@@ -886,7 +886,7 @@ See also:  `iruby-use-process', `iruby-proc', and the variable
   ;; This is implemented here rather than in iruby-mode, as iruby-mode
   ;; does not presently receive an implementation name
   (let ((proc (get-buffer-process (current-buffer)))
-        (use-impl (or impl iruby-buffer-impl))
+        (use-impl (or impl iruby-buffer-interactor))
         (use-syntax (or syntax iruby-ruby-syntax iruby-default-ruby-syntax)))
     (when (stringp use-impl)
       (setq use-impl (or (ignore-errors (iruby-get-interactive-impl use-impl))
@@ -900,7 +900,7 @@ See also:  `iruby-use-process', `iruby-proc', and the variable
        (cond
          (use-impl
           (setq
-           iruby-buffer-impl use-impl
+           iruby-buffer-interactor use-impl
            iruby-impl-binding-expr (unless (stringp use-impl)
                                      (iruby:interactive-binding-expr use-impl))
            iruby-impl-completion-expr (unless (stringp use-impl)
@@ -1282,7 +1282,7 @@ Otherwise, any input at the prompt will be sent to the iRuby process."
           (when (string= (expand-file-name default-directory) dir)
             (throw 'buffer buffer)))))))
 
-(defun iruby-read-impl (&optional prompt)
+(defun iruby-read-interactor (&optional prompt)
   "Read the name of an implementation in `iruby-interactive-bindings',
 returning `iruby-default-implementation' if user has entered no text.
 
@@ -1295,7 +1295,7 @@ PROMPT will default to the string, \"Ruby Implementation: \""
       :test #'equal :key #'iruby:impl-name)))
 
 ;;; ad-hoc test
-;; (iruby-read-impl)
+;; (iruby-read-interactor)
 
 ;;;###autoload
 (defun iruby (&optional impl new name dir)
@@ -1332,7 +1332,7 @@ see also: `run-iruby'"
            ;; third preference, create a new console, if a project dir
            ;; is accessible from default-directory
            (and (null (or current-prefix-arg use-console))
-                (iruby-console-find :match-initialize nil)))
+                (iruby-console-create :match-initialize nil)))
 
           (active-buff
            ;; fourth preference is to use any non-console iruby impl
@@ -1356,13 +1356,13 @@ see also: `run-iruby'"
                  (t default-directory)))
           (interactor
            (cond
-             (new (iruby-read-impl "Run interactive Ruby: "))
+             (new (iruby-read-interactor "Run interactive Ruby: "))
              (console
-              (with-current-buffer console iruby-buffer-impl))
+              (with-current-buffer console iruby-buffer-interactor))
              (new-console
-              (iruby-console-find :start dir))
+              (iruby-console-create :start dir))
              (active-buff
-              (with-current-buffer active-buff iruby-buffer-impl))
+              (with-current-buffer active-buff iruby-buffer-interactor))
              ;; fallback: use the default interactor kind
              (t (iruby:get-default-interactive-binding)))))
      (list interactor new (iruby:impl-name interactor) dir)))
@@ -1405,7 +1405,6 @@ match irrespective of whether the buffer's iRuby process is running"
     (or (when (eq major-mode 'iruby-mode)
           (current-buffer))
         (check-buffer iruby-buffer)
-              ;; FIXME returns only the first matching buffer
         (unless no-console
           (let ((console (iruby-find-console-buffer)))
             (check-buffer console)))
@@ -1417,7 +1416,7 @@ match irrespective of whether the buffer's iRuby process is running"
                          (or (null no-console)
                              (and (buffer-live-p b)
                                   (with-current-buffer b
-                                    (iruby:console-p iruby-buffer-impl)))))
+                                    (iruby:console-p iruby-buffer-interactor)))))
                 (throw 'last b))))))))
 
 ;;;###autoload
@@ -1468,14 +1467,14 @@ Type \\[describe-mode] in the process buffer for the list of commands."
                        current-prefix-arg)))
     (let ((buffer (cond
                     (new nil)
-                    ((typep impl 'iruby-impl)
+                    ((iruby:impl-p impl)
                      (catch 'found
                        (dolist (elt iruby-process-buffers)
                          (cl-destructuring-bind (p . buff) elt
                            (ignore p)
                            (with-current-buffer buff
                              ;; NB this uses an EQ test for parity with `iruby'
-                             (when (eq impl iruby-buffer-impl)
+                             (when (eq impl iruby-buffer-interactor)
                                (throw 'found buff)))))))
                     ;; NB `iruby' provides a tests for console buffers.
                     ;; This will test for the first active buffer, if reached:
@@ -1577,7 +1576,7 @@ See also: `iruby-get-last-output', `iruby-print-result'"
                                :test #'string=))
                         (error "Found no buffer for name %S in iruby-process-buffers"
                                whence))))))
-    (with-current-buffer buffer iruby-buffer-impl)))
+    (with-current-buffer buffer iruby-buffer-interactor)))
 
 ;;; ad-hoc test, assuming at least one iRuby process
 ;; (iruby-process-impl (caar iruby-process-buffers))
@@ -2016,7 +2015,7 @@ will be seleted by `iruby-read-process-interactive'"
         (cached-data (assq process iruby-process-buffers)))
     (with-current-buffer buff
       (let ((cmd (process-command process))
-            (impl iruby-buffer-impl)
+            (impl iruby-buffer-interactor)
             (syntax iruby-ruby-syntax)
             (multibyte-p enable-multibyte-characters)
             (locals (cl-remove 'enable-multibyte-characters
@@ -2592,6 +2591,8 @@ Then switch to the process buffer."
 
 (provide 'iruby)
 
+;; avoiding cicular dep errors by requiring all symmetrically dependent
+;; libraries afer the provide call
 (require 'iruby-complete)
 (require 'iruby-compile)
 (require 'iruby-console)
