@@ -16,7 +16,8 @@
 ;; This file is not part of GNU Emacs.
 
 (eval-when-compile
-  (require 'cl-macs))
+  (require 'cl-macs)
+  (require 'cl-generic))
 
 (require 'iruby-util)
 (require 'iruby)
@@ -93,7 +94,7 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
          (dir-device (file-attribute-device-number dir-attrs))
          (dir-ino (file-attribute-inode-number dir-attrs))
          (name
-          (typecase impl
+          (cl-typecase impl
             (iruby:impl (iruby:impl-name impl))
             (t impl))))
     (catch 'search
@@ -113,8 +114,8 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
                                        (file-attribute-inode-number o-attrs))))
                          (and o-attrs
                               (= o-device dir-device)
-                              (= o-ino dir-ino)))
-                       (throw 'search buff)))))))))))
+                              (= o-ino dir-ino)
+                              (throw 'search buff)))))))))))))
 
 
 ;;
@@ -132,8 +133,8 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
 (cl-defgeneric iruby:initialize-instance-from (inst other)
   ;; FIXME remove, no longer used
   (:method ((inst iruby-wrapper-binding) (other iruby:interactive-binding))
-    (let ((inst-sl (iruby:class-slots (class-of inst)))
-          (other-sl (iruby:class-slots (class-of other))))
+    (let ((inst-sl (iruby:class-slots (eieio-object-class inst)))
+          (other-sl (iruby:class-slots (eieio-object-class other))))
       (dolist (common-sl (cl-intersection
                              (iruby:class-slots (find-class 'iruby-wrapper-binding))
                              (iruby:class-slots (find-class 'iruby:interactive-binding))
@@ -142,16 +143,15 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
         (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))
 
 
+(cl-defgeneric iruby:console-class-prefix-cmd (console))
+(cl-defgeneric iruby:console-class-append-args (console))
+(cl-defgeneric iruby:console-instance-prefix-cmd (console))
+(cl-defgeneric iruby:console-instance-append-args (console))
+
+
 (cl-defgeneric iruby:console-kind (datum)
   (:documentation
    "Return the symbolic name for an `iruby:console-test'"))
-
-
-(cl-defgeneric iruby:console-wrapper-prefix-cmd (console)
-  (:documentation
-   "Return a list of direct wrapper arguments for the console.
-
-See also: `iruby:console-prefix-cmd'"))
 
 
 (defclass iruby:console-mixin ()
@@ -159,23 +159,40 @@ See also: `iruby:console-prefix-cmd'"))
     :initarg :kind
     :accessor iruby:console-kind
     :type symbol)
-    (prefix-cmd
+   (class-prefix-cmd
     :type list
     :initforml nil
     ;; TBD hopefully the class allocation is inherited by subclases in EIEIO
     :allocation :class
-    :accessor iruby:console-wrapper-prefix-cmd
+    :accessor iruby:console-class-prefix-cmd
     :documentation
     "Wrapper command and prefix arguments for console instances of this type")
-   (append-args
+   (prefix-cmd ;; non initform
+    :type list
+    :initarg :prefix-cmd
+    ;; how does this now return no-applicable-method on a subclass of iruby:console-mixin?
+    :accessor: iruby:console-instance-prefix-cmd)
+   (class-append-args
     :type list
     :initform nil
     :allocation :class
-    :accessor iruby:console-wrapper-append-args
+    :accessor iruby:console-class-append-args
     :documentation
     "Wrapper suffix arguments for console instances of this type")
+   (append-args ;; no initform
+    :type list
+    :initarg :append-args
+    :accessor: iruby:console-instance-append-args)
    ) ;; slots
   :abstract t)
+
+(cl-defgeneric iruby:console-instance-prefix-cmd-p (console)
+  (:method ((console iruby:console-mixin))
+    (slot-boundp console 'prefix-cmd)))
+
+(cl-defgeneric iruby:console-instance-append-args-p (console)
+  (:method ((console iruby:console-mixin))
+    (slot-boundp console 'append-args)))
 
 (cl-defgeneric iruby:console-prefix-cmd (console)
   "Compute a shell command previx for a wrapper console's shell command
@@ -189,18 +206,16 @@ an interactive binding for the console.
 The command list returned from this function should be of a syntax for
 running the console implementation under comint"
   (:method ((console iruby:console-mixin))
-    (let ((cmd (iruby:console-wrapper-prefix-cmd console)))
-      (append cmd (when (cl-next-method-p)
-                    (cl-call-next-method))))))
-
+    (if (iruby:console-instance-prefix-cmd-p console)
+        (iruby:console-instance-prefix-cmd console)
+      (iruby:console-class-prefix-cmd console))))
 
 (cl-defgeneric iruby:console-append-args (console)
   "Compute the list of trailing arguments of the shell command for CONSOLE"
   (:method ((console iruby:console-mixin))
-    (let ((class-args (iruby:console-wrapper-append-args console)))
-      (append (when (cl-next-method-p)
-                (cl-call-next-method))
-              class-args))))
+    (if (iruby:console-instance-append-args-p console)
+        (iruby:console-instance-append-args console)
+      (iruby:console-class-append-args console))))
 
 (defclass iruby:console (iruby:console-mixin iruby-wrapper-binding)
   () ;; slots
@@ -212,7 +227,7 @@ running the console implementation under comint"
           (iruby:console-append-args datum)))
 
 (defclass iruby:gemfile-console (iruby:console)
-  ((prefix-cmd
+  ((class-prefix-cmd
     :initform '("bundle" "exec")))
   :abstract t)
 
@@ -235,7 +250,7 @@ running the console implementation under comint"
   :abstract t)
 
 (defclass iruby:gem-console (iruby:console)
-  ((append-args
+  ((class-append-args
     :initform  '("-I" "lib")))
   :abstract t)
 
@@ -365,8 +380,8 @@ directory."
                                       ((iruby-file-contents-match globbed test)
                                        (setq first-match globbed))
                                       (t (setq first-match nil))))))))))))))
-    (let ((console-class (intern (format "iruby:console-%s" kind)))
-          (test-class (intern (format "iruby:console-test-%s" kind))))
+    (let ((console-class (intern (format "iruby:%s-console-provider" kind)))
+          (test-class (intern (format "iruby:%s-console-test" kind))))
     `(progn
        ;; top-level utility forms
        ;; 1) define the console class
@@ -386,7 +401,7 @@ directory."
 
        (cl-defmethod iruby:console-match-p ((dir string) (test ,test-class))
          (let ((default-directory dir))
-           ,(typecase tests
+           ,(cl-typecase tests
               (string `(car (file-expand-wildcards ,tests)))
               (cons
                `(and ,@(mapcar #'make-glob-re-matcher tests)))
@@ -501,8 +516,8 @@ directory."
    ("config/application.rb" "\\_<Rails::Application\\_>"))
   ;; FIXME compute "-e" <rails_env> ...
   ;; and similar for the hanmai console type
-  ((prefix-cmd
-    :initform ("rails" "console"))))
+  ((class-prefix-cmd
+    :initform '("rails" "console"))))
 
 
 (define-iruby-console hanmai (iruby:gemfile-console)
@@ -523,8 +538,8 @@ directory."
 (define-iruby-console zeus (iruby:gemfile-console)
   ;; test syntax here: one filename regexp (no Gemfile deps parse)
   ".zeus.sock"
-  ((prefix-cmd
-    :initform ("zeus" "console"))))
+  ((class-prefix-cmd
+    :initform '("zeus" "console"))))
 
 
 (provide 'iruby-console)
