@@ -72,6 +72,9 @@
 ;;
 
 (cl-defgeneric iruby:impl-name (datum)
+  (:method ((datum null))
+    "Return NIL"
+    nil)
   (:method((datum string))
     "Return the nondirectory name of DATUM as an implementation name"
     (file-name-nondirectory datum))
@@ -81,7 +84,24 @@
       (cl-typecase bin
         (string (iruby:impl-name bin))
         ;; fallback - no value substitution here
-        (t (prin1-to-string bin))))))
+        (t (prin1-to-string bin)))))
+  (:method ((datum buffer))
+    "Return the `iruby:impl-name' for a non-nil variable `iruby-buffer-impl'
+in BUFFER, else nil
+
+If the `iruby-buffer-impl' for BUFFER is non-nil yet the `iruby:impl-name'
+for that implementation is nil, this will return a string computed from
+the buffer name for BUFFER.
+
+This method should return nil only in instancs when BUFFER is not a live
+buffer, or when BUFFER has a null `iruby-buffer-impl'. Otherwise, this
+mehod should return an implementation name for some interactive Ruby
+environment in BUFFER"
+    (when (buffer-live-p datum)
+      (with-current-buffer datum
+        (when iruby-buffer-impl
+          (or (iruby:impl-name iruby-buffer-impl)
+              (format "unknown(%s)" (buffer-name buffer))))))))
 
 (cl-defgeneric iruby:impl-bin (impl))
 ;; NB indirection for deriving the bin from the iruby:impl-name

@@ -83,11 +83,15 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
                                   (file-expand-wildcards path))))
 
 
-(cl-defun iruby-find-console-buffer (&optional (dir default-directory) name)
+(cl-defun iruby-find-console-buffer (&optional (dir default-directory) impl)
   (let* ((dir-attrs (or (file-attributes dir 'integer)
                         (error "Directory not found: %s" dir)))
          (dir-device (file-attribute-device-number dir-attrs))
-         (dir-ino (file-attribute-inode-number dir-attrs)))
+         (dir-ino (file-attribute-inode-number dir-attrs))
+         (name
+          (typecase impl
+            (iruby-impl (iruby:impl-name impl))
+            (t impl))))
     (catch 'search
       (cl-dolist (elt iruby-process-buffers)
         (let ((buff (cdr elt)))
@@ -95,6 +99,7 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
             (with-current-buffer buff
               (and (if name (equal name (iruby:impl-name iruby-buffer-impl))
                      t)
+                   (iruby:console-p iruby-buffer-impl) ;; in BUFF
                    (let* ((o-attrs (file-attributes default-directory
                                                     'integer))
                           (o-device (when o-attrs
