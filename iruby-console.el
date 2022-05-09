@@ -143,15 +143,64 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
         (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))
 
 
-(cl-defgeneric iruby:console-class-prefix-cmd (console))
-(cl-defgeneric iruby:console-class-append-args (console))
-(cl-defgeneric iruby:console-instance-prefix-cmd (console))
-(cl-defgeneric iruby:console-instance-append-args (console))
+(cl-defgeneric iruby:console-class-prefix-cmd (console)
+  "Return the class-allocated prefix command for the CONSOLE
 
+The effective method should return a cons of a shell command name and
+zero or more shell command arguments, with each element as a string.
+
+This command list will be prefixed to any shell command list for running
+an interactive binding for the console.
+
+The command list returned from this function should be of a syntax for
+running the console implementation under comint.
+
+The value returned by this generic function will be used for a CONSOLE
+that has no prefix-cmd bound for the console instance.
+
+Methods on this generic function should not return nil.
+
+See also:
+`iruby:console-prefix-cmd'
+`iruby:console-instance-prefix-cmd-p'
+`iruby:console-instance-prefix-cmd'")
+
+
+(cl-defgeneric iruby:console-instance-prefix-cmd (console)
+  "If CONSOLE has a bound prefix-cmd value, return the value
+
+Methods on this generic function may err if CONSOLE does not have a
+bound slot for the value.
+
+See also:
+`iruby:console-prefix-cmd'
+`iruby:console-instance-prefix-cmd-p'
+`iruby:console-class-prefix-cmd'")
+
+
+(cl-defgeneric iruby:console-class-append-args (console)
+  "Return the class-allocated shell append-args for the CONSOLE.
+
+Methods on this generic function may return nil.
+
+See also:
+`iruby:console-prefix-cmd'
+`iruby:console-instance-prefix-cmd-p'
+`iruby:console-instance-append-args'")
+
+(cl-defgeneric iruby:console-instance-append-args (console)
+  "If CONSOLE has a bound append-args value, return the value
+
+Methods on this generic function may err if CONSOLE does not have a
+bound slot for the value.
+
+See also:
+`iruby:console-append-args'
+`iruby:console-instance-append-args-p'
+`iruby:console-class-append-args'")
 
 (cl-defgeneric iruby:console-kind (datum)
-  (:documentation
-   "Return the symbolic name for an `iruby:console-test'"))
+  "Return the symbolic name for an `iruby:console-test'")
 
 
 (defclass iruby:console-mixin ()
@@ -187,50 +236,83 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
   :abstract t)
 
 (cl-defgeneric iruby:console-instance-prefix-cmd-p (console)
+  "Return true if CONSOLE can be assumed to hold a unique prefix command.
+
+See also: `iruby:console-prefix-cmd'"
   (:method ((console iruby:console-mixin))
     (slot-boundp console 'prefix-cmd)))
 
 (cl-defgeneric iruby:console-instance-append-args-p (console)
+  "Return true if CONSOLE can be assumed to hold an append-args value
+unique for the console instance.
+
+See also: `iruby:console-append-args'"
   (:method ((console iruby:console-mixin))
     (slot-boundp console 'append-args)))
 
 (cl-defgeneric iruby:console-prefix-cmd (console)
-  "Compute a shell command previx for a wrapper console's shell command
-
-The effective method should return a cons of a shell command name and
-zero or more shell command arguments, with each element as a string.
-
-This command list will be prefixed to any shell command list for running
-an interactive binding for the console.
-
-The command list returned from this function should be of a syntax for
-running the console implementation under comint"
+  "Compute the shell command prefix for the CONSOLE's shell command"
   (:method ((console iruby:console-mixin))
+    "If the CONSOLE has a prefix command unique for the instance, return
+that value. Else, return the value of the class-allocated prefix command
+for the CONSOLE.
+
+The prefix command for the CONSOLE will be used as a prefix to the
+underlying interactive implementation accessed by the CONSOLE.
+
+For instance, this method may return the list (\"bundle\" \"exec\") to
+ensure that any implementation selected by the user will be run under
+that prefix shell command.
+
+This method should return a cons value, i.e a non-empty list. Each
+element of the return value should be a string, such that the first
+element in the return value represents a shell command and subsequent
+elements, arguments for that shell command. This return value will be
+prefixed to any command list for each interactive Ruby implementation,
+when initializing an iRuby process buffer for the console.
+
+See also
+`iruby:console-instance-prefix-cmd'
+`iruby:console-class-prefix-cmd'
+`iruby:console-append-args'"
     (if (iruby:console-instance-prefix-cmd-p console)
         (iruby:console-instance-prefix-cmd console)
       (iruby:console-class-prefix-cmd console))))
 
 (cl-defgeneric iruby:console-append-args (console)
-  "Compute the list of trailing arguments of the shell command for CONSOLE"
+  "Compute the list of trailing arguments for the CONSOLE's shell command"
   (:method ((console iruby:console-mixin))
+    "If the CONSOLE has a append-args unique for the instance, return
+that value. Else, return the value of the class-allocated append-args
+for the CONSOLE.
+
+The value returned by this method will be used for providing any
+trailing arguments after the implementation shell command wrapped by the
+prefix command for the CONSOLE. This method may return nil.
+
+See also
+`iruby:console-instance-append-args'
+`iruby:console-class-append-args'
+`iruby:console-prefix-cmd'"
     (if (iruby:console-instance-append-args-p console)
         (iruby:console-instance-append-args console)
       (iruby:console-class-append-args console))))
 
-(defclass iruby:console (iruby:console-mixin iruby-wrapper-binding)
-  () ;; slots
-  :abstract t)
-
-(cl-defmethod iruby:parse-cmd ((datum iruby:console))
+(cl-defmethod iruby:parse-cmd ((datum iruby:console-mixin))
   (append (iruby:console-prefix-cmd datum)
           (iruby:parse-cmd (iruby:wrapper-base-impl datum))
           (iruby:console-append-args datum)))
+
+
+(defclass iruby:console (iruby:console-mixin iruby-wrapper-binding)
+  ()
+  :abstract t)
+
 
 (defclass iruby:gemfile-console (iruby:console)
   ((class-prefix-cmd
     :initform '("bundle" "exec")))
   :abstract t)
-
 
 
 (defclass iruby:rails-console (iruby:gemfile-console)
@@ -248,6 +330,7 @@ running the console implementation under comint"
   ;;   selection for an `iruby:rails-console'
   ()
   :abstract t)
+
 
 (defclass iruby:gem-console (iruby:console)
   ((class-append-args
@@ -304,6 +387,7 @@ at least one file matching the FILE-GLOB in order for the defining
 console type to be considered a match onto the contents of a project
 directory."
 ))
+
 
 (defclass iruby:console-test (iruby:console-mixin)
   ((console-class
@@ -455,15 +539,14 @@ directory."
                          (cons matched-test dir))))
                   (throw 'matched retv)))
               (check-dir (dir)
-                ;; when the parent directory is the same as dir, it's at
-                ;; the root directory of the filesystem
+                ;; when the parent directory is the same as dir, dir is
+                ;; typically a root filesystem directory
                 (or (match-dir-p dir)
                     (let ((next (unless (stop-dir-p dir)
                                   (file-name-directory (directory-file-name dir)))))
-                      ;; for dir "/" next => "/" (*nix pathnames)
                       (unless (or (null next) (equal next dir)
                                   ;; ensure nexr dir is readable,
-                                  ;; e.g w/ termux on Android where
+                                  ;; e.g w/ Termux on Android where
                                   ;; /data/data/ is not readable
                                   (not (file-readable-p next)))
                         (check-dir next))))))
