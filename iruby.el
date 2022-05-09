@@ -1356,7 +1356,8 @@ see also: `run-iruby'"
                  (t default-directory)))
           (interactor
            (cond
-             (new (iruby-read-interactor "Run interactive Ruby: "))
+             ((and new current-prefix-arg)
+              (iruby-read-interactor "Run interactive Ruby: "))
              (console
               (with-current-buffer console iruby-buffer-interactor))
              (new-console
