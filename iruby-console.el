@@ -409,7 +409,8 @@ directory."
 ;; (setq iruby-console-tests nil)
 
 (defun iruby-register-console-test (instance)
-  ;; FIXME this does not accept any precedence args e.g :before / :after
+  ;; FIXME this does not accept any precedence args
+  ;; e.g :before symbol / :after symbol / :append t
   ;;
   ;; in effect, this overwrites any existing instance per the instance's
   ;; index in `iruby-console-tests' or else pushes the instance to become
@@ -494,7 +495,7 @@ directory."
 
        (iruby-register-console-test
         ;; EIEIO typically defines a constructor function of the same
-        ;; name as a class
+        ;; name as each class
         ;;
         (,test-class :kind (quote ,kind)
                      :test (quote ,tests)
@@ -522,6 +523,13 @@ directory."
   ;;
   ;; To locate any initialized interactor for a dir, see also:
   ;; `iruby-find-console-buffer'
+  ;;
+  ;; To determine the first project directory at or containing START,
+  ;; for the set of console tests in TESTS, and without initializing an
+  ;; iRuby console instance, this can be called as:
+  ;;
+  ;;    (iruby-console-create :match-initialize nil)
+  ;;
   (cl-labels ((stop-dir-p (dir)
                 ;; NB this itself does not check if dir is "/"
                 (string-match-p locate-dominating-stop-dir-regexp dir))
@@ -579,9 +587,41 @@ directory."
 
 
 (define-iruby-console gem (iruby:gem-console)
-  ;; defines `iruby:console-gem' and `iruby:console-test-gem'
+  ;; This defines the EIEIO classes `iruby:gem-console-provider'
+  ;; and `iruby:gem-console-test'.
   ;;
-  ;; syntax: one filename glob, no file parsing
+  ;; The the console-provider class `iruby:gem-console-provider'
+  ;; will have the specified superclasses, i.e only `iruby:gem-console'
+  ;; and will be recorded as the console class to be used on a
+  ;; successful  test with an instance of the `iruby:gem-console-test'
+  ;; class.
+  ;;
+  ;; Also within this macroexpansion: An instance of the console-test
+  ;; class will be initialized using a constructor function of the same
+  ;; name as the console-test class.  That instance will then be
+  ;; registered with `iruby-register-console-test' as having a kind
+  ;; being the symbol 'gem', a set of test forms as provided in the next
+  ;; element in this macro form, and a console-class being the
+  ;; class-name for the console-provider class i.e
+  ;; `iruby:gem-console-provider' in this macroexpansion.
+  ;;
+  ;; This should serve to ensure that the console-test instance will
+  ;; then be available in calls to `iruby-console-create' when called
+  ;; with a default TESTS parameter. In applications, then for the first
+  ;; project directory found that matches the test  pattern in a call to
+  ;; `iruby-console-create' with default TESTS and MATCH-INITIALIZE
+  ;; parameters, then an instance of the console-provider class defined
+  ;; here will be initialized and returned by the call to
+  ;; `iruby-console-create'.
+  ;;
+  ;; This console-search mechanism is used e.g in the `iruby'
+  ;; interactive call, to select a project directory and console class
+  ;; to use under some interactive  calls to `iruby'. That would be
+  ;; mainly when the user has not specified an iRuby command, then when
+  ;; a  project directory can be located, strating at `default-directory'
+  ;; when `iruby' is called.
+  ;;
+  ;; syntax for the test used here: one filename glob, no file parsing
   "*.gemspec"
   ())
 

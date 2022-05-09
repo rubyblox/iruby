@@ -1492,17 +1492,6 @@ Type \\[describe-mode] in the process buffer for the list of commands."
         (setq buffer (run-iruby-new impl name)))
       (iruby-switch-to-process buffer)))
 
-(defun iruby-process-sentinel (process state)
-  "A process sentinel installed by `run-iruby-new'"
-  (let ((status (process-status process))
-        (%state (or (ignore-errors (string-trim-right state))
-                    state)))
-    ;; parse out some normal exit states, before warn
-    (unless (or (memq status '(exit finished))
-                (equal %state "hangup")
-                (equal %state "killed"))
-      (warn "iRuby process %s state changed (%S): %S"
-            process status %state))))
 
 (defun iruby-get-last-output (&optional proc)
   "Return the last output from the ruby process PROC as a string.
@@ -2081,7 +2070,8 @@ used"
              (car commandlist) nil (cdr commandlist))
       (setq process (get-buffer-process buffer)))
 
-    (set-process-sentinel process 'iruby-process-sentinel)
+    (set-process-sentinel process
+                          (iruby:get-process-sentinel impl))
     (iruby-add-process-buffer process buffer)
 
     (set-buffer buffer)
