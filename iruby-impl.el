@@ -22,14 +22,14 @@
 (require 'eieio-base)
 (require 'eieio-custom)
 
+;; ensure `iruby:class-slot-initargs' is available
+(require 'iruby-eieio-utils)
+
 ;;
 ;; utility forms for iruby-impl.el
 ;;
 
 (require 'iruby-util)
-
-
-(eval-when-compile
 
 (defsubst iruby:ensure-class (which)
   (cl-etypecase which
@@ -43,8 +43,6 @@
            (eieio--class cls cls))))
   (cl-map 'list 'cl--slot-descriptor-name
           (cl--class-slots use-cls))))
-
-) ;; eval-when-compile
 
 (defun iruby:get-readline-arg (cmdlist)
   (let* ((output (shell-command-to-string
@@ -70,6 +68,29 @@
       (t "--noreadline"))))
 
 
+(defvar iruby-ruby-version-suffix-re "[0-9.]+"
+  "Regular expression for the version suffix of an interactive Ruby.
+
+This variable is used in `iruby-cmd-name-no-version'")
+
+
+(defun iruby-cmd-name-no-version (exec-cmd)
+  "Try to guess the non-version part of the shell command name EXEC-CMD
+
+EXEC-CMD should be provided as an absolute or relative file pathname, a
+string. This string may be provided with a version suffix matching the
+regular expression in the variable, `iruby-ruby-version-suffix-re'.
+
+Examples:
+ (iruby-cmd-name-no-version \"/usr/local/bin/irb27\")
+  => \"irb\""
+  (string-trim-right (file-name-nondirectory exec-cmd)
+                     iruby-ruby-version-suffix-re))
+
+;; (iruby-cmd-name-no-version "/usr/local/bin/irb27")
+;; => "irb"
+
+
 ;;
 ;; main code, iruby-impl.el
 ;;
@@ -89,22 +110,23 @@
         ;; fallback - no value substitution here
         (t (prin1-to-string bin)))))
   (:method ((datum buffer))
-    "Return the `iruby:impl-name' for a non-nil variable `iruby-buffer-interactor'
+    "Return the `iruby:impl-name' for a non-nil variable `iruby-buffer-interactive-impl'
 in BUFFER, else nil
 
-If the `iruby-buffer-interactor' for BUFFER is non-nil yet the `iruby:impl-name'
+If the `iruby-buffer-interactive-impl' for BUFFER is non-nil yet the `iruby:impl-name'
 for that implementation is nil, this will return a string computed from
 the buffer name for BUFFER.
 
 This method should return nil only in instancs when BUFFER is not a live
-buffer, or when BUFFER has a null `iruby-buffer-interactor'. Otherwise, this
+buffer, or when BUFFER has a null `iruby-buffer-interactive-impl'. Otherwise, this
 mehod should return an implementation name for some interactive Ruby
 environment in BUFFER"
     (when (buffer-live-p datum)
       (with-current-buffer datum
-        (when iruby-buffer-interactor
-          (or (iruby:impl-name iruby-buffer-interactor)
+        (when iruby-buffer-interactive-impl
+          (or (iruby:impl-name iruby-buffer-interactive-impl)
               (format "unknown(%s)" (buffer-name buffer))))))))
+
 
 (cl-defgeneric iruby:impl-bin (impl))
 ;; NB indirection for deriving the bin from the iruby:impl-name
@@ -206,13 +228,20 @@ specifier")
   :documentation "Base class for definitions of iRuby implementations"
   :abstract t)
 
+(defsubst iruby:impl-p (obj)
+  "Return true if OBJ is an object of type `iruby:impl'
 
-(defun iruby:get-default-implementation (&optional context)
+This should return true if OBJ is an instance of the EIEIO class
+`iruby:impl' or an instance of some subclass of that class."
+  (cl-typep obj 'iruby:impl))
+
+
+(defun iruby:default-implementation (&optional context)
   "Return the default `iruby:ruby-language-impl' object.
 
 This function uses the variable `iruby-default-implementation'
 
-See also: `iruby:get-default-interactive-binding'"
+See also: `iruby:default-interactive-ruby'"
   (iruby:get-language-impl iruby-default-implementation))
 
 (cl-defgeneric iruby:get-language-impl (datum &optional noerr)
@@ -318,6 +347,21 @@ element of the shell command specifier IMPL"
     "This method returns the function `iruby-simple-process-sentinel'"
     'iruby-simple-process-sentinel))
 
+(cl-defgeneric iruby:process-pre-init (impl)
+  "callback called from `run-iruby-new'"
+  (:method ((impl cons))
+    (ignore impl))
+  (:method ((impl iruby:impl))
+    (ignore impl)))
+
+(cl-defgeneric iruby:process-post-init (impl)
+  "callback called from `run-iruby-new'"
+  (:method ((impl cons))
+    (ignore impl))
+  (:method ((impl iruby:impl))
+    (ignore impl)))
+
+
 (defclass iruby:ruby-language-impl (iruby:impl)
   ;; FIXME provide a subclass integrating with solargraph,
   ;; via eglot (non-interactive)
@@ -348,22 +392,51 @@ element of the shell command specifier IMPL"
 (cl-defgeneric iruby:interactive-base-args (datum))
 (cl-defgeneric iruby:interactive-args (datum))
 
-(cl-defgeneric iruby:interactive-binding-list (datum))
-(cl-defgeneric iruby:interactive-completion-list (datum))
+(cl-defgeneric iruby:interactive-binding-expr-list (datum)
+  (:method ((datum string))
+    (iruby:interactive-binding-expr-list (iruby:split-shell-string datum)))
+  (:method ((datum cons))
+    ;; try to guess a binding form, if called for a Ruby impl provided
+    ;; as a cmd string => cmd list
+    (let* ((exec-cmd (car datum))
+           (exec-name (iruby-cmd-name-no-version exec-cmd))
+           (guessed-impl (iruby:get-interactive-ruby exec-name t)))
+      (when guessed-impl
+        (iruby:interactive-binding-expr-list guessed-impl)))))
+
+;; (iruby:interactive-binding-expr-list "irb27")
+;; => (not nil)
+;; (iruby:interactive-binding-expr-list "/usr/local/bin/irb27")
+;; => (not nil)
+;; (iruby:interactive-binding-expr-list "/opt/local/bin/pry2000")
+;; => (not nil)
+
+(cl-defgeneric iruby:interactive-completion-list (datum)
+  (:method ((datum string))
+    (iruby:interactive-completion-list (iruby:split-shell-string datum)))
+  (:method ((datum cons))
+    ;; try to guess a completion form, if called for a Ruby impl
+    ;; provided as a cmd string => cmd list
+    (let* ((exec-cmd (car datum))
+           (exec-name (iruby-cmd-name-no-version exec-cmd))
+           (guessed-impl (iruby:get-interactive-ruby exec-name t)))
+      (when guessed-impl
+        (iruby:interactive-completion-list guessed-impl)))))
+
+;; (iruby:interactive-completion-list "irb27")
+;; => (not nil)
+;; (iruby:interactive-completion-list "/usr/local/bin/irb27")
+;; => (not nil)
+;; (iruby:interactive-completion-list "/opt/local/bin/pry2000")
+;; => (not nil)
 
 (cl-defgeneric iruby:interactive-binding-expr (datum)
   (:method (datum)
-    ;; FIXME consider parsing for functions here,
-    ;; assuming some implementation object for the
-    ;; first arg to each
-    (let ((seq  (iruby:interactive-binding-list datum)))
+    (let ((seq  (iruby:interactive-binding-expr-list datum)))
       (when seq (apply 'concat seq)))))
 
 (cl-defgeneric iruby:interactive-completion-expr (datum)
   (:method (datum)
-    ;; FIXME consider parsing for functions here,
-    ;; assuming some implementation object for the
-    ;; first arg to each
     (let ((seq  (iruby:interactive-completion-list datum)))
       (when seq (apply 'concat seq)))))
 
@@ -372,9 +445,9 @@ element of the shell command specifier IMPL"
 
 (cl-defgeneric iruby:interactive-prompt-mode (datum))
 
-(defclass iruby:interactive-binding (iruby:impl)
+(defclass iruby:interactive-ruby (iruby:impl)
   ((base-ruby
-    :initform 'iruby:get-default-implementation
+    :initform 'iruby:default-implementation
     :initarg :base-ruby
     :accessor iruby:interactive-base-ruby
     :label "Base ruby"
@@ -397,7 +470,7 @@ If a string, the string should name an `iruby-language-impl'
 accessible to `get-iruby-language-impl'.
 
 If an `iruby-language-impl' object, the provided implementation will be
-used singularly with this `iruby:interactive-binding'
+used singularly with this `iruby:interactive-ruby'
 
 If the value `nil', then no base implementation will be used. The
 `iruby:impl-bin' for this implementation should then provide a shell
@@ -433,7 +506,7 @@ interactive instance, without the args terminator \"--\".")
     :accessor iruby:interactive-args
     :label "Optional args for the interactive ruby"
     :documentation
-    "In `iruby:interactive-binding' instances, this slot's value will be
+    "In `iruby:interactive-ruby' instances, this slot's value will be
 used to provide command args for the interactive ruby, subsequent of the
 normal args terminator \"--\"
 
@@ -448,7 +521,7 @@ joined with any other elements provided in the args specifier")
    (binding
     :initform nil
     :initarg :binding
-    :accessor iruby:interactive-binding-expr
+    :accessor iruby:interactive-binding-expr-list
     :label "Ruby Binding expression"
     :type list
     :custom (repeat :tag "Binding expression (Ruby)" string)
@@ -547,8 +620,37 @@ cmdline for this slot's value.")
   "Base Class for an interactive interface to a Ruby implementation"
   :abstract t)
 
+(cl-defgeneric iruby:make-desktop-load-form (impl)
+  ;; This is defined here and not in iruby-desktop.el as in order to
+  ;; minimize the number of require calls needed in iruby-desktop.el
+  ;;
+  ;: This function may be called after after iruby is initialized in the
+  ;; Emacs environment. This function would be used during `desktop-save'
+  ;; for any iruby process buffer with a non-nil, local `desktop-save-buffer'
+  ;; function. The binding would normally be set under `iruby-mode'
+  (:method ((impl string))
+    impl)
+  (:method ((impl cons))
+    impl)
+  (:method ((impl iruby:interactive-ruby))
 
-(defclass iruby:irb-binding (iruby:interactive-binding)
+    (let* ((argmap (iruby:class-slot-initargs (eieio-object-class impl)))
+           (load-args (list nil))
+           (next-args load-args))
+      (dolist (arginf argmap)
+        (let ((initargs (cdr arginf))
+              (slname (car arginf)))
+          (when (and initargs
+                     (slot-boundp impl slname))
+            (let ((new-args (list (car initargs)
+                                  (slot-value impl slname))))
+              (setf (cdr (last next-args)) new-args)
+              (setq next-args new-args)
+            ))))
+      (cons (class-name (class-of impl))
+            (cdr load-args)))))
+
+(defclass iruby:irb-binding (iruby:interactive-ruby)
   ((bin
     :initform "irb")
    (requires
@@ -570,7 +672,7 @@ cmdline for this slot's value.")
 (defun iruby:make-irb-cmd (name &rest args)
   (apply 'iruby:irb-binding :name name args))
 
-(defclass iruby:pry-binding (iruby:interactive-binding)
+(defclass iruby:pry-binding (iruby:interactive-ruby)
   ((bin
     :initform "pry")
    (requires
@@ -610,7 +712,7 @@ cmdline for this slot's value.")
   :documentation "Local Pry command")
 
 
-(cl-defmethod iruby:get-language-impl ((datum iruby:interactive-binding)
+(cl-defmethod iruby:get-language-impl ((datum iruby:interactive-ruby)
                                        &optional noerr)
   (cl-block top
     (let ((base (iruby:interactive-base-ruby datum)))
@@ -626,32 +728,32 @@ cmdline for this slot's value.")
           (t (error "No iRuby ruby implementation found for name %S" base)))))))
 
 
-(cl-defgeneric iruby:get-interactive-binding (datum &optional noerr)
-  (:method ((datum iruby:interactive-binding) &optional noerr)
+(cl-defgeneric iruby:get-interactive-ruby (datum &optional noerr)
+  (:method ((datum iruby:interactive-ruby) &optional noerr)
     datum)
   (:method ((datum string) &optional noerr)
-    (or (cl-find datum iruby-interactive-bindings
+    (or (cl-find datum iruby-interactive-impls
           :key #'iruby:impl-name
           :test #'string=)
         (if noerr nil
           (error "No interactive implementation found for name %S" datum))))
   )
 
-;; (iruby:get-interactive-binding "irb")
-;; (iruby:get-interactive-binding  "pry")
-;; (iruby:get-language-impl  (iruby:get-interactive-binding "irb"))
-;; (iruby:get-language-impl  (iruby:get-interactive-binding "pry"))
+;; (iruby:get-interactive-ruby "irb")
+;; (iruby:get-interactive-ruby  "pry")
+;; (iruby:get-language-impl  (iruby:get-interactive-ruby "irb"))
+;; (iruby:get-language-impl  (iruby:get-interactive-ruby "pry"))
 
-(defun iruby:get-default-interactive-binding (&optional context)
-  "Return the default `iruby:interactive-binding' object.
+(defun iruby:default-interactive-ruby (&optional prefer)
+  "Return a default `iruby:interactive-ruby' object
 
-This function uses the variable `iruby-default-interactive-binding'.
+This function calls `iruby:get-interactive-ruby', providing a
+default value for for the optional argument PREFER. If PREFER is nil,
+the variable `iruby-default-interactive-ruby' will be used."
+  (iruby:get-interactive-ruby
+   (or prefer iruby-default-interactive-ruby)))
 
-See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
-  (iruby:get-interactive-binding
-   (or context iruby-default-interactive-binding)))
-
-;; (iruby:get-default-interactive-binding)
+;; (iruby:default-interactive-ruby)
 
 
 (cl-defgeneric iruby:get-initial-environment (datum)
@@ -704,7 +806,7 @@ See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
           (iruby:rconc new next)))))
   (:method ((datum string))
     ;; FIXME this prevents any reuse for "normal command strings"
-    (iruby:parse-cmd (iruby:get-interactive-binding datum)))
+    (iruby:parse-cmd (iruby:get-interactive-ruby datum)))
   (:method ((datum iruby:impl))
     (let* ((bin (iruby:impl-bin datum))
            (req (iruby:impl-requires datum))
@@ -721,7 +823,7 @@ See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
                       (string (list s)))))
           (iruby-irconc new args-next)))
       arg-base))
-  (:method ((datum iruby:interactive-binding))
+  (:method ((datum iruby:interactive-ruby))
     (let* ((base-impl (iruby:interactive-base-ruby datum))
            (cmd (cl-etypecase base-impl
                   (null  (list (iruby:impl-bin datum)))
@@ -783,5 +885,3 @@ See also: `iruby:get-default-implementation' and `iruby:parse-cmd'"
 
 
 (provide 'iruby-impl)
-
-

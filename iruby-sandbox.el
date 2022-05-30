@@ -7,7 +7,7 @@
 
 (defun iruby-buffer-get-interactor (which)
   (with-current-buffer (iruby-process-buffer (iruby-proc which))
-    iruby-buffer-interactor))
+    iruby-buffer-interactive-impl))
 
 
 ;; (iruby-buffer-get-interactor "gem(iokit)")
@@ -65,7 +65,7 @@
   (customize-option 'iruby-ruby-language-impls)
 
 
-  (customize-option 'iruby-interactive-bindings)
+  (customize-option 'iruby-interactive-impls)
 
 )
 
@@ -128,7 +128,7 @@
 (cl-defgeneric iruby:initialize-wrap (class base &rest initargs)
   ;; no longer used in iruby-console.el
   (:method ((class eieio--class)
-            (base iruby:interactive-binding) &rest initargs)
+            (base iruby:interactive-ruby) &rest initargs)
     (let ((inst (apply 'make-instance (eieio--class-name class)
                        initargs)))
       (iruby:initialize-instance-from inst base)
@@ -138,17 +138,17 @@
 (eval-when ()
   (let ((wrp (iruby-wrapper-binding :name "TEST"
                                     :wrapper-base-cmd '("echo" "TEST@"))))
-    (iruby:initialize-instance-from wrp (iruby:get-default-interactive-binding))
+    (iruby:initialize-instance-from wrp (iruby:default-interactive-ruby))
     (iruby:parse-cmd wrp))
 
 
   (iruby:initialize-wrap '("echo" "TEST@")
-                      (iruby:get-default-interactive-binding)
+                      (iruby:default-interactive-ruby)
                       "test")
 
   (iruby:parse-cmd
    (iruby:initialize-wrap nil
-                       (iruby:get-default-interactive-binding)
+                       (iruby:default-interactive-ruby)
                        "test2"))
 
   )
@@ -208,7 +208,7 @@
 
 (eval-when ()
   (let ((a (iruby:class-slots (find-class 'iruby-wrapper-binding)))
-        (b (iruby:class-slots (find-class 'iruby:interactive-binding))))
+        (b (iruby:class-slots (find-class 'iruby:interactive-ruby))))
     ;; => ... set difference in present implementation: (wrapper-base-cmd)
     (print (list :intersection (cl-intersection a b :test #'eq)
                  :difference (cl-set-difference a b :test #'eq)
@@ -218,7 +218,7 @@
 
 (eval-when ()
 
-  (let* ((binding (iruby:get-default-interactive-binding))
+  (let* ((binding (iruby:default-interactive-ruby))
          (inst (iruby:initialize-wrap nil (find-class 'iruby:gem-console)
                                       binding)))
     (append (iruby:console-wrapper-prefix-cmd inst)
@@ -227,7 +227,7 @@
             ))
   ;; ^ suffix args are returned as should be (FIXME lost before comint?)
 
-  (let* ((binding (iruby:get-default-interactive-binding))
+  (let* ((binding (iruby:default-interactive-ruby))
          (inst (iruby:initialize-wrap nil (find-class 'iruby:gemfile-console)
                                       binding)))
     (append (iruby:console-wrapper-prefix-cmd inst)
@@ -246,7 +246,7 @@
   (let ((impl
          (with-current-buffer (or (cdar iruby-process-buffers)
                                   (error "Found no Ruby"))
-           iruby-buffer-interactor)))
+           iruby-buffer-interactive-impl)))
 
     ;; console-prefix-cmd is showing up nil for the impl?
     (message "cmd for %S: %S" (iruby:impl-name impl)
@@ -262,3 +262,88 @@
     (iruby:parse-cmd inst)
     )
   )
+;; -- tests for macroexpansion onto cl-generic defmethod forms
+
+(cl-defgeneric iruby-test (datum)
+  (:method (datum)
+    (warn "In T"))
+  (:method ((datum string))
+    (warn "In STRING")
+    (when (cl-next-method-p)
+      (cl-call-next-method))))
+
+;; (iruby-test "PING")
+
+
+;;
+;; more API tests onto EIEIO
+;;
+
+;; (iruby:slot-initargs 'requires 'iruby:impl)
+;; => (:requires)
+
+(eval-when-compile
+
+(defsubst iruby:initarg-slot (initarg cls)
+  (let ((map (eieio--class-initarg-tuples (iruby:ensure-class cls))))
+    (cdr (assq initarg map))))
+
+) ;; eval-when-compile
+
+;; (iruby:initarg-slot :tag 'iruby:console-test)
+;; => tag
+
+
+(defun unset-proxy ()
+  ;; try to clear any proxy environment variables in Emacs
+  ;; such that may be used by subprocesses, e.g bundle(1)
+  (interactive)
+  (dolist (envt process-environment t)
+    (let ((var (car (split-string envt "=")))
+          (case-fold-search t))
+      (when (string-match-p ".*proxy$" var)
+        (setenv var nil)))))
+
+
+;;
+;; ad hoc debugging for assignment of interactive binding/completion
+;; exprs, mainly in iruby console process buffers
+;;
+
+(iruby:impl-p
+ (with-current-buffer (iruby-process-buffer (iruby-proc))
+   iruby-buffer-interactive-impl))
+;; ^ shouldf => t [x] (iruby:impl-p reimplemented)
+
+(iruby:interactive-binding-expr-list
+  (with-current-buffer (iruby-process-buffer (iruby-proc))
+    ;; the corresponding slot is bound, so wh does the top form return nil?
+    iruby-buffer-interactive-impl)
+  )
+;; ^ should not => nil [x] (initializing console impl from base impl)
+
+(eieio-oref
+  (with-current-buffer (iruby-process-buffer (iruby-proc))
+    ;; the corresponding slot is bound, so wh does the top form return nil?
+    iruby-buffer-interactive-impl)
+  'binding
+  )
+;; ^ should not => nil [x] (initializing console impl from base impl)
+
+(iruby:interactive-binding-expr-list
+ (iruby:wrapper-base-impl
+  (with-current-buffer (iruby-process-buffer (iruby-proc))
+    ;; the corresponding slot is bound, so wh does the top form return nil?
+    iruby-buffer-interactive-impl))
+  )
+;; ^ does not => nil [x]
+
+
+;;;
+;;; setting `byte-optimizations' to 'byte' to prevent source
+;;; optimizations that might result in errors on unbound symbols,
+;;; when calling either `cl-call-next-method' or `cl-next-method-p'
+;;;
+;; Local Variables:
+;; TBD.byte-optimize: byte
+;; End:

@@ -20,14 +20,11 @@
   (require 'cl-generic))
 
 (require 'iruby-util)
-(require 'iruby)
-
+(require 'iruby-impl)
 
 ;;
 ;; utility forms
 ;;
-
-(eval-when-compile
 
 (defsubst iruby-file-contents-match (file regexp &optional match-group)
   (with-temp-buffer
@@ -54,9 +51,6 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
   (cl-remove-if 'auto-save-file-name-p
                 (cl-remove-if-not 'file-exists-p
                                   (file-expand-wildcards path))))
-
-) ;; eval-when-compile
-
 
 (cl-defun iruby-find-console-buffer (&optional (dir default-directory) impl)
   ;; Caveats & Docs (FIXME needs docstring)
@@ -102,10 +96,10 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
         (let ((buff (cdr elt)))
           (when (buffer-live-p buff)
             (with-current-buffer buff
-              (and (if name (equal name (iruby:impl-name iruby-buffer-interactor))
+              (and (if name (equal name (iruby:impl-name iruby-buffer-interactive-impl))
                      t)
-                   (iruby:console-p iruby-buffer-interactor) ;; in BUFF
-                   (let ((dir (iruby:impl-initial-dir iruby-buffer-interactor)))
+                   (iruby:console-p iruby-buffer-interactive-impl) ;; in BUFF
+                   (let ((dir (iruby:impl-initial-dir iruby-buffer-interactive-impl)))
                      (when (and (file-exists-p dir) (file-readable-p dir))
                        (let* ((o-attrs (file-attributes dir 'integer))
                               (o-device (when o-attrs
@@ -124,22 +118,25 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
 ;; after the console API in inf-ruby
 ;;
 
-(defclass iruby-wrapper-binding (iruby:interactive-binding)
+(defclass iruby-wrapper-binding (iruby:interactive-ruby)
   ((wrapper-base-impl
     :accessor iruby:wrapper-base-impl
     :initarg :wrapper-base-impl
     :type iruby:impl)))
 
+
 (cl-defgeneric iruby:initialize-instance-from (inst other)
-  ;; FIXME remove, no longer used
-  (:method ((inst iruby-wrapper-binding) (other iruby:interactive-binding))
+  (:method ((inst iruby-wrapper-binding) (other iruby:interactive-ruby))
     (let ((inst-sl (iruby:class-slots (eieio-object-class inst)))
           (other-sl (iruby:class-slots (eieio-object-class other))))
       (dolist (common-sl (cl-intersection
-                             (iruby:class-slots (find-class 'iruby-wrapper-binding))
-                             (iruby:class-slots (find-class 'iruby:interactive-binding))
-                             :test #'eq)
+                          (iruby:class-slots (class-of inst))
+                          (iruby:class-slots (class-of other))
+                          :test #'eq)
                inst)
+        ;;; DEBUG
+        ;; (warn "Setting slot %s-sl in %S => %S" common-sl (iruby:impl-name inst)
+        ;;       (eieio-oref other common-sl))
         (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))
 
 
@@ -507,10 +504,10 @@ directory."
 
 (cl-defgeneric iruby:default-interactor-for (datum)
   (:method (datum)
-    (iruby:get-default-interactive-binding datum))
+    (iruby:default-interactive-ruby datum))
   (:method ((datum iruby:console-test))
     ;; used in iruby-console-initialize-matched
-    (iruby:get-default-interactive-binding iruby-default-interactive-binding)))
+    (iruby:default-interactive-ruby iruby-default-interactive-ruby)))
 
 (cl-defun iruby-console-create (&key
                                 (start default-directory)
@@ -629,6 +626,78 @@ directory."
   ;; syntax: one filename glob, no file parsing
   "Gemfile"
   ())
+
+(cl-defmethod iruby:process-pre-init ((impl iruby:gemfile-console-provider))
+  ;; this asumes default-directory has been set elsewhere in the call
+  ;; stack, as to match the project directory for this console instance
+  (let* ((gemfile-attrs (file-attributes "Gemfile"))
+         (lock-attrs (when gemfile-attrs
+                       (file-attributes "Gemfile.lock"))))
+    (when gemfile-attrs
+      (let ((gemfile-mtime (file-attribute-modification-time gemfile-attrs))
+            (lock-mtime (when lock-attrs
+                          (file-attribute-modification-time lock-attrs)))
+            (console-name (iruby:impl-name impl))
+            install-p)
+        (cond
+          ((null lock-mtime)
+           (setq install-p
+                 (unless noninteractive
+                   (yes-or-no-p
+                    (format "Bundle not installed for %s. Install now?"
+                            console-name)))))
+          ((and lock-mtime
+                (string-greaterp (format-time-string "%s" gemfile-mtime)
+                                 (format-time-string "%s" lock-mtime)))
+           (setq install-p
+                 (unless noninteractive
+                   (yes-or-no-p
+                    (format "Gemfile lock outdated for %s. Reinstall now?"
+                            console-name)))))
+          ((null gemfile-attrs) ;; debug case
+           (warn "Found no Gemfile for console %s" console-name)))
+        (when install-p
+          (let* ((buffer (iruby-run-tool impl '("bundle" "install")))
+                 (proc (get-buffer-process buffer)))
+
+            (while (eq (process-status proc) 'run)
+              (sleep-for iruby-output-wait))
+
+            (unless (zerop (process-exit-status proc))
+              ;; prevent the iruby impl from being initialized
+              (error "Process exited with error in %s" buffer)
+              )))))))
+
+(cl-defgeneric iruby-run-tool (impl cmd)
+  "Return a buffer for a new process running CMD for the specified iRuby IMPL
+
+If IMPL represents a project console, it can usally be assumed that the
+current `default-directory' represents the project directory for that
+console
+
+Methods on this generic function should return the buffer for the newly
+created process."
+  (:method ((impl t) (cmd string))
+    (iruby-run-tool impl (iruby:split-shell-string cmd)))
+  (:method ((impl iruby:impl) (cmd cons))
+    (let* ((impl-name (iruby:impl-name impl))
+           (cmd-name (file-name-nondirectory (car cmd)))
+           (proc-name (format "%s @ %s" cmd-name impl-name)))
+      (with-iruby-process-environment (impl)
+        (let ((buff (generate-new-buffer (format "*%s*" proc-name))))
+          ;; FIXME comint handling for this buffer is simply breaking
+          ;; mainly in comint-output-filer (Emacs 29 ...)
+          (set-buffer buff)
+          (comint-mode)
+          (insert "pwd: ") ;; FIXME fontify the "pwd" and pathname parts
+          (insert default-directory)
+          (newline)
+          (insert "$ ")
+          (insert (mapconcat 'identity cmd " "))
+          (newline)
+          (setq buff (comint-exec buff proc-name (car cmd) nil (cdr cmd)))
+          ;; NB always return a buffer from this generic function
+          (pop-to-buffer buff))))))
 
 
 (define-iruby-console rails (iruby:rails-console)

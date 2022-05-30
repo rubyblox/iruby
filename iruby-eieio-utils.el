@@ -2,6 +2,11 @@
 
 ;; this file is not a package file
 
+(eval-when-compile
+  (require 'cl-macs))
+
+(require 'eieio)
+
 (defun iruby:class-slot-initargs (class)
   (let* ((cls (cl-etypecase class
                 (symbol (find-class class))
@@ -25,16 +30,5 @@
         (in (iruby:class-slot-initargs class)))
     (cdr (assq sl in))))
 
-;; (iruby:slot-initargs 'requires 'iruby:impl)
-;; => (:requires)
+(provide 'iruby-eieio-utils)
 
-(eval-when-compile
-
-(defsubst iruby:initarg-slot (initarg cls)
-  (let ((map (eieio--class-initarg-tuples (iruby:ensure-class cls))))
-    (cdr (assq initarg map))))
-
-) ;; eval-when-compile
-
-;; (iruby:initarg-slot :tag 'iruby:console-test)
-;; => tag

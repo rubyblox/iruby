@@ -37,15 +37,15 @@
        (rplacd (last ,seq) ,new)
        (setq ,seq ,lst))))
 
+) ;; eval-when-compile
+
+
 (defsubst iruby:split-shell-string (str)
   (cond
     ((or (> emacs-major-version 28)
          (and (= emacs-major-version 28) (>= emacs-minor-version 1)))
      (split-string-shell-command str))
     (t (split-string-and-unquote str))))
-
-
-) ;; eval-when-compile
 
 (defun iruby:same-file-p (file-a file-b)
   "Return true if file-a and file-b represent the same physical
@@ -77,6 +77,5 @@ This function will not dereference symbolic links"
        (add-to-history 'iruby-directory-history use-dir
                        iruby-directory-history-limit))
     use-dir))
-
 
 (provide 'iruby-util)

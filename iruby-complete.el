@@ -47,7 +47,7 @@
                                  ;; ensure that the string is not displayed:
                                  nil))
            (let ((completion-snippet
-                  (format (concat iruby-impl-completion-expr "; nil;\n")
+                  (format (concat iruby-buffer-completion-expr "; nil;\n")
                    (iruby-escape-single-quoted expr)
                    (iruby-escape-single-quoted line))))
              (process-send-string proc completion-snippet)
@@ -98,7 +98,7 @@
   "Retrieve the list of completions and prompt the user.
 Returns the selected completion or nil."
   (cond
-    (iruby-impl-completion-expr
+    (iruby-buffer-completion-expr
      (let ((bounds (iruby-completion-bounds-of-prefix)))
        (when bounds
          (list (car bounds) (cdr bounds)
@@ -107,6 +107,6 @@ Returns the selected completion or nil."
                  (completion-table-dynamic #'iruby-completions))))))
     (t
      (iruby-warn-once "Completion not configured for implementation %s"
-                      iruby-buffer-interactor))))
+                      iruby-buffer-interactive-impl))))
 
 (provide 'iruby-complete)

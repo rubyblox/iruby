@@ -15,10 +15,34 @@
 ;;
 ;; This file is not part of GNU Emacs.
 
+;;
+;; % Overview
+;;
+;; This file provides configuration for store/restore of iRuby
+;; process buffers under interactive `desktop-save' and `desktop-read'
+;; functions as defined in desktop.el
+;;
+;; The main configuration will be applied when the user calls
+;; `iruby-ensure-desktop-support', whether interactively or
+;; via init-file.
+;;
+;; Recommended configuration: Add the following to `user-init-file'
+;;
+;;   (autoload 'iruby-ensure-desktop-support "iruby-desktop" nil t)
+;;   (add-hook 'after-init-hook 'iruby-ensure-desktop-support)
+;;
+;; This will call `iruby-ensure-desktop-support' after the user
+;; init file has been evaluated.
+;;
+;; If the `desktop' feature is not available during `ater-init-hook',
+;; then the function `iruby-ensure-desktop-support' will ensure that
+;; an element exists on `after-load-alist' such that the function
+;; i.e  `iruby-ensure-desktop-support' will be called again after
+;; the desktop' library has been loaded into Emacs.
+
 (eval-when-compile
   (require 'cl-macs))
 
-(require 'desktop)
 
 (make-variable-buffer-local
  (defvar iruby-mapped-buffer-name nil
@@ -67,7 +91,6 @@ See also: `iruby-mapped-buffer-name'"
     (setq iruby-mapped-buffer-name stored)))
 
 
-
 (make-variable-buffer-local
  (defvar iruby-mapped-source-buffers nil
    "Temporary storage for use with `iruby-restore-desktop-buffer' under
@@ -106,62 +129,43 @@ This function's name will normally be stored for the `iruby-mode' entry
 under the global `desktop-buffer-mode-handlers' list.
 
 See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
-  (let* ((cmd (or (cdr (assq 'iruby-buffer-command desktop-buffer-locals))
-                  (cdr (assq :cmd data))
+  (let* ((default-directory
+          ;; should be inherited by any new process
+          (or (cdr (assq 'default-directory desktop-buffer-locals))
+              (cdr (assq :dir data))
+              default-directory))
+         (impl-data (cdr (assq :impl-data data)))
+         (impl (cond
+                 ((and (consp impl-data) (symbolp (car impl-data)))
+                  (apply 'make-instance impl-data))
+                 (impl-data impl-data)
+                 (t
                   (progn
-                    (warn "no iruby-buffer-command saved in desktop data for %s. \
-Using current defaults for %s" name iruby-default-implementation )
-                    (iruby:parse-cmd (iruby-get-default-interactive-binding)))))
-        (impl (or (cdr (assq 'iruby-buffer-interactor desktop-buffer-locals))
-                  (cdr (assq :impl data))
-                  ;; FIXME this would not retrieve the implementation
-                  ;; name if the ruby impl. command is prefixed or
-                  ;; suffixed with a version specifier
-                  (progn
-                    (warn "No implementation stored for %s" name)
-                    (iruby:impl-name cmd))))
-        (dir (or (cdr (assq 'default-directory desktop-buffer-locals))
-                 (cdr (assq :dir data))
-                 default-directory))
-        (default-p (cdr (assq :default-p data)))
-        (mapped (or (cdr (assq :mapped data))
-                    (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
-
-    (set (make-variable-buffer-local 'iruby-buffer-interactor)
-         (or (iruby:get-interactive-binding impl t)
-             (iruby:get-default-interactive-binding nil)))
+                    (warn "No implementation data stored for buffer %S. using default"
+                          (current-buffer))
+                    (iruby:default-interactive-ruby)))))
+         (cmd (iruby:parse-cmd impl))
+         (default-p (cdr (assq :default-p data)))
+         (mapped (or (cdr (assq :mapped data))
+                     (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
 
     (unless (boundp 'erm-full-parse-p)
-      ;; FIXME this is a hack for enh-ruby-mode, such that may err
-      ;; during desktop restore, on an unbound variable ...
+      ;; FIXME ensure that this variable is not unbound,
+      ;; if enh-ruby-mode will be used in the buffer
       (make-variable-buffer-local 'erm-full-parse-p)
       (setq-default erm-full-parse-p nil))
 
-    ;; NB seems to be run only once per original process buffer
-    (with-temp-buffer
-      ;; FIXME does not set the dir of the process - such that Dir.pwd
-      ;; would use - during desktop-read, only sets the default-directory
-      ;; in the emacs buffer ... will have to Dir.chdir in the process.
-      ;;
-      ;; TBD desktop-read may have localized default-directory when this
-      ;; is called, to some side effect as such? or may it be a side
-      ;; effect of with-temp-buffer?
-      (setq default-directory dir)
-      (let* ((procbuff (run-iruby-new cmd impl))
-             (proc (get-buffer-process procbuff))
-             (exp-dir (expand-file-name dir)))
-        (when mapped
-          (with-current-buffer procbuff
-            ;; store buffer mapping data for the callback to
-            ;; `iruby-map-desktop-process-buffers'
-            ;; from `desktop-after-read-hook'
-            (setq iruby-mapped-source-buffers mapped)))
-        (when default-p
-          (push '(:default-p . t)  iruby-mapped-misc-data))
-       (iruby-send-string proc
-                           (format "puts(%%q(# iRuby chdir to %s))" dir))
-       (iruby-send-string proc
-                          (format "Dir.chdir(%%q(%s))" exp-dir))))))
+    (let* ((procbuff (run-iruby-new impl (iruby:impl-name impl)))
+           (proc (get-buffer-process procbuff)))
+      (when mapped
+        (with-current-buffer procbuff
+          ;; store buffer mapping data for this process, to be
+          ;; accessed in `iruby-map-desktop-process-buffers'
+          ;; from `desktop-after-read-hook'
+          (setq iruby-mapped-source-buffers mapped)))
+      (when default-p
+        (push '(:default-p . t)  iruby-mapped-misc-data))
+      (switch-to-buffer procbuff))))
 
 (defun iruby-desktop-misc-data (deskdir)
   "Callback function for `desktop-save' under iRuby process buffers
@@ -175,15 +179,53 @@ assumed that this function will be called with an iRuby process
 buffer as the current buffer, during `desktop-save'.
 
 This function returns an associative list representing a mapping for
-the following values in the current iruby-mode buffer:
-- :impl => `iruby-buffer-interactor', needed for later restoring
-   any implementation-specific bindings under `iruby-initialize-impl-bindings'
-- :cmd => `iruby-buffer-command' i.e for the original process
-- :dir => `default-directory' for the buffer, in Emacs
+the following values in each iRuby process buffer, i.e each buffer
+with a major-mode `iruby-mode'
+
+- :impl-data => A literal value as returned by the generic function
+  `iruby:make-desktop-load-form' when called on the interactive
+  implementation object for the original iRuby process buffer.
+
+  The syntax of this value may vary as dependent on the class of the
+  implementation.
+
+  If the implementation was provdied as a string or a list, indicating a
+  console shell command, then the value of the :impl-data field will
+  typically represent that original string or list value.
+
+  If the implementation was provided as an `iruby:impl' then the value
+  of the :impl-data field will typically be a list object, of the
+  following syntax. The value should have a `car' denoting a constructor
+  function for the class of the orignal object. The `cdr' of the value
+  would be returned in a plist syntax, providing a list of initialization
+  arguments. The :impl-data value in this instance would represent an
+  Emacs Lisp form, such that may be applied as to initialize a generally
+  equivalent `iruby:impl' object.
+
+  As one known limitation in the `iruby:impl' instance, an object
+  initialized from this :impl-data value may not be exactly equivalent
+  to any object in `iruby-interactive-impls', though providing the
+  behaviors of an interactive implementation of an equivalent iRuby
+  class.
+
+- :dir => `default-directory' for the buffer, in Emacs. This may
+  or may not match the CWD for the Ruby process at the time of the
+  call to `desktop-save'
+
 - :mapped => list of buffer names, for buffers where `iruby-buffer' has
-   been set as eq to the current buffer
-- :default-p => present if true, indicating that the buffer was in use
-   as the `iruby-default-ruby-buffer'
+  been set as eq to the selected iRuby process buffer. This will be
+  applied during `desktop-read' with an assumption that the buffer names
+  for iRuby source buffers will remain consistent across the initial
+  call to `desktop-save' and any later call to `desktop-read'. Otherwise,
+  each non-matching buffer would not have the original `iruby-buffer'
+  binding restored.
+
+- :default-p => presented with a non-nil CDR in the return value, if
+  the buffer was in  use as the `iruby-default-ruby-buffer' as visible
+  from within the process buffer itself. Generally, that variable will
+  have a global binding in Emacs - if non nil, then identifying the
+  default Ruby process buffer to use for any Ruby source-mode buffer
+  that has a nil `iruby-buffer'
 
 See also:
  `iruby-map-desktop-process-buffers',
@@ -204,10 +246,8 @@ See also:
                   (cdr last-mapped) new-last
                   last-mapped new-last)))))
 
-    (append (list (cons :impl (iruby:impl-name iruby-buffer-interactor))
-                  ;; This will store the iruby-buffer-command
-                  ;; separate to the iruby-buffer-interactor
-                  (cons :cmd iruby-buffer-command)
+    (append (list (cons :impl-data
+                        (iruby:make-desktop-load-form iruby-buffer-interactive-impl))
                   (cons :dir default-directory)
                   (cons :mapped (cdr mapped)))
             ;; optional data
@@ -227,8 +267,9 @@ For' activation after `desktop-read', This function's name should
 normally be present in `desktop-after-read-hook'. The function
 `iruby-ensure-desktop-support' will configure that hook and other hooks
 needed for iRuby desktop session support."
-  (let ((mapped (list nil))
+  (let ((mapped (list nil)) ;; mapped: local storage & return
         (buffers (buffer-list)))
+    (require 'iruby)
     (cl-labels ((find-buffer-for (ref-name)
                   (cl-dolist (b buffers)
                     (with-current-buffer b
@@ -254,6 +295,7 @@ needed for iRuby desktop session support."
                    (warn "Buffer unavailable for iRuby process mapping: %s" mapped-name))
                   )))))))))
 
+;;;###autoload
 (defun iruby-ensure-desktop-support ()
   "Ensure desktop.el will be configured for restoring `iruby-mode' buffers
 
@@ -302,14 +344,9 @@ See also: `desktop-save', `desktop-read'"
                     ;; call again, after the desktop lib is loaded
                     (iruby-ensure-desktop-support))))
        (cond
-         (elt (push (list 'desktop form) (cdr elt)))
+         ((cdr elt) (push form (cdr (last elt))))
          (t (push (list 'desktop form) after-load-alist))
        )))))
 
-
-;;;; subsq, in user init files e.g (simplest approach)
-;; (require 'desktop)
-;; (require 'iruby)
-;; (iruby-ensure-desktop-support)
 
 (provide 'iruby-desktop)
