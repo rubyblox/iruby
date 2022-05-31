@@ -396,8 +396,13 @@ directory."
   )
 
 (defvar iruby-console-tests nil
-  ;; FIXME expand the docs here
- "Sequence of iruby:console-test objects")
+ "Sequence of iruby:console-test objects
+
+This variable is used in the following forms:
+- `iruby-register-console-test' to store an `iruby:console-test'
+- `iruby-console-create' to run a provided `match-initialize' function
+   on any first matched `iruby:console-test' within an upwards-recursive
+   directory walk starting at a provided 'start' directory")
 
 ;;; reset the value:
 ;; (setq iruby-console-tests nil)
@@ -511,19 +516,49 @@ directory."
                                 (tests iruby-console-tests)
                                 (match-initialize
                                  'iruby-console-initialize-matched))
-  ;; NB if called with default initargs and some project directory can
-  ;; be found at or containing the START dir, then this function will
-  ;; always create and return a newly initialized interactor object.
-  ;;
-  ;; To locate any initialized interactor for a dir, see also:
-  ;; `iruby-find-console-buffer'
-  ;;
-  ;; To determine the first project directory at or containing START,
-  ;; for the set of console tests in TESTS, and without initializing an
-  ;; iRuby console instance, this can be called as:
-  ;;
-  ;;    (iruby-console-create :match-initialize nil)
-  ;;
+  "Call a function for a matching project directory at or containing START.
+
+The TESTS argument should provide a list of `iruby:console-test' objects.
+This list will be applied in descending order of precedence, within an
+upwards-recursive directory walk beginning at the directory provided as
+START.
+
+For the first matching directory at or containing the START directory,
+the MATCH-INITIALIZE function will be called with two arguments, the
+matching `iruby:console-test' and the matched directory. The value
+returned by the MATCH-INITIALIZE function will be returned from this
+function.
+
+A nil value may be provided for MATCH-INITIALIZE, in which case the
+return value will be a cons object its car as the matched test and its
+cdr as the matched directory.
+
+If no match is found, this function will return nil.
+
+To locate any initialized `iruby:console' for a specific filesystem
+directory, see also: `iruby-find-console-buffer'
+
+This function is used by default in the interactive form under the
+`iruby' Emacs Lisp command. In the implementation of that interactive
+form, if no matching project directory is found then a new iRuby process
+will be created with an implementation other than an `iruby:console'
+implementation.
+
+By default, this function operates on the list of `iruby:console-test'
+objects registered in the variable `iruby-console-tests'. Each of these
+`iruby:console-test' objects would typically be implemented with a set
+of effective filesystem match clauses, e.g the existence of a file named
+Gemfile, as well as an `iruby:console' class to initialize under
+instance of a filesystem match.
+
+Each `iruby:console' class may be implemented with behaviors specific to
+that console class and subclasses of that console class, e.g procedures
+to run before initializing a new iRuby buffer for that console class.
+
+Typically, the `iruby' Emacs Lisp command would represent the top-level
+interactive entry to this structural subset of the iRuby API
+
+This API was inspired by the console implementation in inf-ruby"
   (cl-labels ((stop-dir-p (dir)
                 ;; NB this itself does not check if dir is "/"
                 (string-match-p locate-dominating-stop-dir-regexp dir))
@@ -557,7 +592,12 @@ directory."
 
 
 (defun iruby-console-initialize-matched (matched-test dir)
-  ;; NB DIR may be used in later calls with console-match predicate functions
+  "Create an `iruby:console' object for some project directory.
+
+This function may be used to provide the MATCH-INITIALIZE function for
+`iruby-console-create'. In this usage, the MATCHED-TEST should be an
+object of type `iruby:console-test', while DIR would be a string
+representing a project directory"
  (let* ((class (iruby:ensure-class
                 (iruby:console-test-console-class matched-test)))
         (base (iruby:default-interactor-for matched-test))
