@@ -134,9 +134,6 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
                           (iruby:class-slots (class-of other))
                           :test #'eq)
                inst)
-        ;;; DEBUG
-        ;; (warn "Setting slot %s-sl in %S => %S" common-sl (iruby:impl-name inst)
-        ;;       (eieio-oref other common-sl))
         (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))
 
 
@@ -568,6 +565,7 @@ directory."
         (instance (make-instance (eieio--class-name class)
                                  :wrapper-base-impl base
                                  :initial-dir dir)))
+   (iruby:initialize-instance-from instance base)
    ;; set an impl name for the console
    (setf (iruby:impl-name instance)
          (format "%s(%s %s)" (iruby:console-kind instance)
@@ -666,7 +664,8 @@ directory."
             (unless (zerop (process-exit-status proc))
               ;; prevent the iruby impl from being initialized
               (error "Process exited with error in %s" buffer)
-              )))))))
+              )
+            ))))))
 
 (cl-defgeneric iruby-run-tool (impl cmd)
   "Return a buffer for a new process running CMD for the specified iRuby IMPL

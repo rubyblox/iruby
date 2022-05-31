@@ -193,6 +193,26 @@ The default initial value is derived from `history-length'"
   ;; TBD :group 'iruby-files
   :group 'iruby)
 
+
+(defcustom iruby-debug nil
+  "If non-nil, enable debugging messages in iRuby
+
+See also: Macro `iruby-debug-info'"
+  :tag "iRuby Debugging"
+  :type '(choice (const :tag "Enable Debugging Messages" t)
+          (const :tag "No Debugging Messages" nil))
+  :group 'iruby-impl)
+
+(defmacro iruby-debug-info (msg &rest args)
+  "If `iruby-debug' is non-nil, produce a debugging message via 'warn'
+
+MSG will be applied as an Emacs Lisp format string, given any provided ARGS"
+  `(when iruby-debug
+     ;; FIXME try to use some buffer other than the generic warnings buffer
+     ;;
+     ;; FIXME also handle when initilizing the ruby (set $DEBUG true)
+     (warn ,msg ,@args)))
+
 (defgroup iruby-ui nil
   "iRuby user interface support"
   :tag "iRuby User Interface"
@@ -915,27 +935,20 @@ See also:  `iruby-use-ruby', `iruby-proc', and the variable
          (proc (or (get-buffer-process buff)
                    (error "Buffer has no process: %s" buffer)))
          (use-impl (or impl iruby-buffer-interactive-impl
-                       (iruby:default-interactive-ruby)))
-        (use-syntax (or syntax iruby-buffer-syntax iruby-default-ruby-syntax)))
-    (when (stringp use-impl)
-      (setq use-impl (or (ignore-errors (iruby-get-interactive-impl use-impl))
-                         use-impl)))
-    (cond
-      (proc
-       (setq iruby-buffer-command (process-command proc))
-       (when use-syntax
-         (setq iruby-buffer-syntax use-syntax)
-         (set-syntax-table (iruby-buffer-syntax-table use-syntax)))
-       (cond
-         (use-impl
-          (setq
-           iruby-buffer-interactive-impl use-impl
-           iruby-buffer-binding-expr (iruby:interactive-ruby-expr use-impl)
-           iruby-buffer-completion-expr (iruby:interactive-completion-expr use-impl)))
-         ) ;; use-impl
-         (t (warn "Unknown Ruby implementation for %s (nil)" (current-buffer)))))
-      (t (warn "Unable to initialize buffer %s for iRuby (no process)"
-               (current-buffer))))))
+                       (progn
+                         (iruby-debug-info "Using default interactive ruby in %S" buff)
+                         (iruby:default-interactive-ruby))))
+         (use-syntax (or syntax iruby-buffer-syntax iruby-default-ruby-syntax)))
+    (setq iruby-buffer-command (process-command proc))
+    (when use-syntax
+      (setq iruby-buffer-syntax use-syntax)
+      (set-syntax-table (iruby-buffer-syntax-table use-syntax)))
+    (setq
+     iruby-buffer-interactive-impl use-impl
+     iruby-buffer-binding-expr (iruby:interactive-binding-expr use-impl)
+     iruby-buffer-completion-expr (iruby:interactive-completion-expr use-impl))
+    use-impl))
+
 
 (define-derived-mode iruby-mode comint-mode 'iruby-app-name
   "Major mode for interacting with an interactive Ruby REPL process.
@@ -1206,8 +1219,7 @@ See also: `iruby-start-of-input', `iruby-end-of-input',
            (setq end (prop-match-end match)))
           (t (setq end start)))
         (setq expr (string-trim (buffer-substring-no-properties start end)))
-        ;;; DEBUG
-        ;; (unless noninteractive (message "At point: %S" expr))
+        (iruby-debug-info (message "At point: %S" expr))
         expr))))
 
 (defun iruby-get-old-input ()
@@ -2190,38 +2202,48 @@ is nil, the value zero will be used.
 See also:
  `iruby-send-region',`iruby-send-definition',`iruby-send-block'
  `iruby-show-last-output'"
-  (let ((term (format iruby-send-terminator (random)
-                      (car (time-convert nil t)))))
-    (save-excursion
-      (save-restriction
-        (let ((m (process-mark proc))
-              (hdr
-               ;; NB reuse 'term' as a header/footer marker for the
-               ;; reply, and a key onto a callback form in `iruby-preoutput-filter'
-               (format "eval <<'%s', %s , '%s', 0x%x;\n"
-                       ;; FIXME needs test for nil impl binding expr
-                       term (or iruby-buffer-binding-expr "nil")
-                       (or file "(Unknown)")
-                       (or line 0)))
-              (tlr
-               (concat "\n" term "\n; puts \n")))
-          (set-buffer (marker-buffer m))
+  (save-excursion
+    (save-restriction
+      (let ((m (process-mark proc))
+            (term (format iruby-send-terminator (random)
+                          (time-convert nil 'integer))))
+        (set-buffer (marker-buffer m))
+        (let* ((hdr
+                ;; NB reuse 'term' as a header/footer marker for the
+                ;; reply, and a key onto a callback form in `iruby-preoutput-filter'
+                (format "eval <<'%s', %s , '%s', 0x%x\n"
+                        ;; FIXME needs test for nil impl binding expr
+                        term
+                        (or iruby-buffer-binding-expr "nil")
+                        (or file "(Unknown)")
+                        (or (and (integerp line) (>= line 0) line)
+                            0)))
+               (tlr
+                (concat "\n" term "\n"))
+               (send-str (concat hdr str tlr)))
           (goto-char m)
           (insert "\n")
           (set-marker m (point))
-          (comint-send-string proc hdr)
-          (comint-send-string proc str)
-          (comint-send-string proc tlr)
+          (iruby-debug-info "Sending string to %s: %S"
+                            (ignore-errors (iruby:impl-name iruby-buffer-interactive-impl))
+                            send-str)
+          (comint-send-string proc send-str)
           )))))
 
-;; - test - expecting a string representation of a ruby symbol
+;; ad hoc tests
 ;;
 ;; (iruby-send-string (iruby-proc) "def a; end")
 ;; (iruby-get-last-output)
 ;;
+;;  ^ FIXME odd behavior when $DEBUG = true in the iruby process,
+;;     seming like a partial failure in the lexer though it shows a
+;;     correct return value after the exception
 ;;
-;; - test - expecting a warning from the sub-ruby on redefinition of a
-;;   constant
+;;     - needs a longer backtrace in irb
+;;
+;;
+;; expecting a warning from the sub-ruby on redefinition of a
+;; constant
 ;;
 ;; (dotimes (n 2 nil) (iruby-send-string (iruby-proc) "module ABC; D=:EF; end"))
 ;; (iruby-get-last-output)
@@ -2229,10 +2251,7 @@ See also:
 ;; ^ FIXME this second test may show a quirk in iruby-get-last-output.
 ;;   Here, iruby-get-last-output will capture the output after both of
 ;;   the expressions to the Ruby process, together with the prompt
-;;   string conctatenated before the second expression. It may be a
-;;   side effect of I/O synchronization with the ruby subprocess and
-;;   Emacs ...
-
+;;   string conctatenated before the second expression.
 
 (defun iruby-print-result ()
   "Print the result displayed under the last evaluation in the ruby
