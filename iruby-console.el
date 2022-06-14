@@ -1,4 +1,4 @@
-;;; iruby-console.el --- project support for iruby
+;;; iruby-console.el --- project support for iRuby -*- lexical-binding: t; -*-
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 
 (require 'iruby-util)
 (require 'iruby-impl)
+(require 'iruby-proc)
 
 ;;
 ;; utility forms
@@ -83,34 +84,38 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
   ;;   argument to this function, representing the first containing
   ;;   project directory of SOME-DIR
   ;;
-  (let* ((dir-attrs (or (file-attributes dir 'integer)
-                        (error "Directory not found: %s" dir)))
-         (dir-device (file-attribute-device-number dir-attrs))
-         (dir-ino (file-attribute-inode-number dir-attrs))
-         (name
-          (cl-typecase impl
-            (iruby:impl (iruby:impl-name impl))
-            (t impl))))
+  (let ((name (cl-typecase impl
+                (iruby:impl (iruby:impl-name impl))
+                (t impl))))
     (catch 'search
       (cl-dolist (elt iruby-process-buffers)
-        (let ((buff (cdr elt)))
-          (when (buffer-live-p buff)
+        (let* ((buff (cdr elt))
+               (buff-impl (when (buffer-live-p buff)
+                            (iruby-buffer-impl buff))))
+          (when buff-impl
             (with-current-buffer buff
-              (and (if name (equal name (iruby:impl-name iruby-buffer-interactive-impl))
+              (and (if name
+                       (equal name (iruby:impl-name buff-impl))
                      t)
-                   (iruby:console-p iruby-buffer-interactive-impl) ;; in BUFF
-                   (let ((dir (iruby:impl-initial-dir iruby-buffer-interactive-impl)))
-                     (when (and (file-exists-p dir) (file-readable-p dir))
-                       (let* ((o-attrs (file-attributes dir 'integer))
-                              (o-device (when o-attrs
-                                          (file-attribute-device-number o-attrs)))
-                              (o-ino (when o-attrs
-                                       (file-attribute-inode-number o-attrs))))
-                         (and o-attrs
-                              (= o-device dir-device)
-                              (= o-ino dir-ino)
-                              (throw 'search buff)))))))))))))
-
+                   (iruby:console-p buff-impl)
+                   (let ((buff-dir (iruby:impl-initial-dir buff-impl)))
+                     (cond
+                       ((iruby:same-file-p buff-dir dir)
+                        (throw 'search buff))
+                       (t
+                        ;; scan all containing directories of the
+                        ;; initial DIR for a match to the console impl's
+                        ;; initial directory
+                        (let ((test-dir dir)
+                              (up-dir (file-name-directory (directory-file-name dir))))
+                          (while (and (file-readable-p up-dir)
+                                      (not (equal test-dir up-dir)))
+                            (if (iruby:same-file-p buff-dir up-dir)
+                                (throw 'search buff)
+                              (setq test-dir up-dir
+                                    up-dir
+                                    (file-name-directory
+                                     (directory-file-name up-dir)))))))))))))))))
 
 ;;
 ;; base classes - iruby-console in EIEIO
@@ -118,23 +123,22 @@ The syntax for PATH would be that used in `file-expand-wildcards'"
 ;; after the console API in inf-ruby
 ;;
 
-(defclass iruby-wrapper-binding (iruby:interactive-ruby)
-  ((wrapper-base-impl
-    :accessor iruby:wrapper-base-impl
-    :initarg :wrapper-base-impl
+(cl-defgeneric iruby:proto-impl-base-impl (instance))
+(cl-defgeneric (setf iruby:proto-impl-base-impl) (new-value instance))
+
+(defclass iruby:proto-impl (iruby:interactive-ruby)
+  ((base-impl
+    :accessor iruby:proto-impl-base-impl
+    :initarg :base-impl
     :type iruby:impl)))
 
-
 (cl-defgeneric iruby:initialize-instance-from (inst other)
-  (:method ((inst iruby-wrapper-binding) (other iruby:interactive-ruby))
+  (:method ((inst iruby:proto-impl) (other iruby:interactive-ruby))
     (let ((inst-sl (iruby:class-slots (eieio-object-class inst)))
           (other-sl (iruby:class-slots (eieio-object-class other))))
-      (dolist (common-sl (cl-intersection
-                          (iruby:class-slots (class-of inst))
-                          (iruby:class-slots (class-of other))
-                          :test #'eq)
+      (dolist (common-sl (cl-intersection inst-sl other-sl :test #'eq)
                inst)
-        (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))
+        (setf (eieio-oref inst common-sl) (eieio-oref other common-sl))))))9
 
 
 (cl-defgeneric iruby:console-class-prefix-cmd (console)
@@ -294,11 +298,11 @@ See also
 
 (cl-defmethod iruby:parse-cmd ((datum iruby:console-mixin))
   (append (iruby:console-prefix-cmd datum)
-          (iruby:parse-cmd (iruby:wrapper-base-impl datum))
+          (iruby:parse-cmd (iruby:proto-impl-base-impl datum))
           (iruby:console-append-args datum)))
 
 
-(defclass iruby:console (iruby:console-mixin iruby-wrapper-binding)
+(defclass iruby:console (iruby:console-mixin iruby:proto-impl)
   ()
   :abstract t)
 
@@ -508,6 +512,7 @@ This variable is used in the following forms:
   (:method (datum)
     (iruby:default-interactive-ruby datum))
   (:method ((datum iruby:console-test))
+    (ignore datum)
     ;; used in iruby-console-initialize-matched
     (iruby:default-interactive-ruby iruby-default-interactive-ruby)))
 
@@ -603,7 +608,7 @@ representing a project directory"
         (base (iruby:default-interactor-for matched-test))
         ;; (extra-initargs (iruby:console-class-initargs class)) ;; TBD ...
         (instance (make-instance (eieio--class-name class)
-                                 :wrapper-base-impl base
+                                 :base-impl base
                                  :initial-dir dir)))
    (iruby:initialize-instance-from instance base)
    ;; set an impl name for the console

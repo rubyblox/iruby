@@ -107,6 +107,7 @@ Returns the selected completion or nil."
                  (completion-table-dynamic #'iruby-completions))))))
     (t
      (iruby-warn-once "Completion not configured for implementation %s"
-                      iruby-buffer-interactive-impl))))
+                      (and iruby-buffer-interactive-impl
+                           (iruby:impl-name iruby-buffer-interactive-impl))))))
 
 (provide 'iruby-complete)

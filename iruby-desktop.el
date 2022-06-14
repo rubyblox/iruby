@@ -76,7 +76,9 @@ This function is used for iRuby desktop support.
 
 See also: `iruby-mapped-buffer-name'"
   (unless (or (eq major-mode 'iruby-mode)
-              (null iruby-buffer))
+              (when (boundp 'iruby-buffer)
+                ;; ^ not bound until iruby has been initialized
+                (null iruby-buffer)))
     (buffer-name)))
 
 (defun iruby-restore-mapped-buffer-name (stored)
@@ -129,6 +131,7 @@ This function's name will normally be stored for the `iruby-mode' entry
 under the global `desktop-buffer-mode-handlers' list.
 
 See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
+  (require 'iruby)
   (let* ((default-directory
           ;; should be inherited by any new process
           (or (cdr (assq 'default-directory desktop-buffer-locals))
@@ -137,7 +140,9 @@ See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
          (impl-data (cdr (assq :impl-data data)))
          (impl (cond
                  ((and (consp impl-data) (symbolp (car impl-data)))
-                  (apply 'make-instance impl-data))
+                  ;; evaluate the impl-data, as assumed to have been
+                  ;; produced by `iruby:make-desktop-load-form'
+                  (eval impl-data))
                  (impl-data impl-data)
                  (t
                   (progn
@@ -145,15 +150,19 @@ See also: `iruby-ensure-desktop-support'; `iruby-desktop-misc-data'"
                           (current-buffer))
                     (iruby:default-interactive-ruby)))))
          (cmd (iruby:parse-cmd impl))
+         ;; :default-p will be used for remapping
+         ;; any `iruby-default-ruby-buffer'
          (default-p (cdr (assq :default-p data)))
          (mapped (or (cdr (assq :mapped data))
                      (cdr (assq 'iruby-mapped-source-buffers desktop-buffer-locals)))))
 
-    (unless (boundp 'erm-full-parse-p)
-      ;; FIXME ensure that this variable is not unbound,
-      ;; if enh-ruby-mode will be used in the buffer
-      (make-variable-buffer-local 'erm-full-parse-p)
-      (setq-default erm-full-parse-p nil))
+    ;;; FIXME needs test without this section and enh-ruby-mode in some
+    ;; other buffer in the emacs desktop frameset
+    ;; (unless (boundp 'erm-full-parse-p)
+    ;;   ;; FIXME ensure that this variable is not unbound,
+    ;;   ;; only if enh-ruby-mode will be used in an iruby process buffer
+    ;;   (make-variable-buffer-local 'erm-full-parse-p)
+    ;;   (setq-default erm-full-parse-p nil))
 
     (let* ((procbuff (run-iruby-new impl (iruby:impl-name impl)))
            (proc (get-buffer-process procbuff)))

@@ -5,22 +5,6 @@
 (require 'iruby)
 
 
-(defun iruby-buffer-get-interactor (which)
-  (with-current-buffer (iruby-process-buffer (iruby-proc which))
-    iruby-buffer-interactive-impl))
-
-
-;; (iruby-buffer-get-interactor "gem(iokit)")
-
-;; (iruby:impl-args  (iruby-buffer-get-interactor "gem(iokit)"))
-;; NIL ?
-
-;; (iruby:parse-cmd  (iruby-buffer-get-interactor "gem(iokit)"))
-;; ^ FIXME no '("-I" "lib") args being included here.
-;;
-;; see iruby:gem-console (eieio)
-
-
 ;; iruby-buffer tests
 
 (defun iruby-field-at-point ()
@@ -31,7 +15,7 @@
   (interactive)
   (message "at point: %S" (get-text-property (point) 'iruby-prompt)))
 
-(defun iruby-ifind-syntax ()
+(defun iruby-find-syntax ()
   (interactive)
   (message "Found syntax: %s" (iruby-find-syntax)))
 
@@ -99,25 +83,25 @@
 
 (eval-when ()
   ;;; its' not a list, here
-  ;; (car (eieio--class-slots (find-class 'iruby-wrapper-binding)))
+  ;; (car (eieio--class-slots (find-class 'iruby:proto-impl)))
 
-  (type-of (eieio--class-slots (find-class 'iruby-wrapper-binding)))
+  (type-of (eieio--class-slots (find-class 'iruby:proto-impl)))
   ;; ^ it's a vector ...
 
-  (type-of (cl--class-slots (find-class 'iruby-wrapper-binding)))
+  (type-of (cl--class-slots (find-class 'iruby:proto-impl)))
   ;; ^ also a vector
 
 
-  (type-of (cl-svref (cl--class-slots (find-class 'iruby-wrapper-binding))
+  (type-of (cl-svref (cl--class-slots (find-class 'iruby:proto-impl))
                      0))
   ;; ^ it's a cl-slot-descriptor
 
 
   ;; (cl--slot-descriptor-name
-  ;;  (cl-svref (cl--class-slots (find-class 'iruby-wrapper-binding))
+  ;;  (cl-svref (cl--class-slots (find-class 'iruby:proto-impl))
   ;;            )
 
-  (cl--class-slots (find-class 'iruby-wrapper-binding))
+  (cl--class-slots (find-class 'iruby:proto-impl))
 
 )
 
@@ -136,8 +120,8 @@
 
 
 (eval-when ()
-  (let ((wrp (iruby-wrapper-binding :name "TEST"
-                                    :wrapper-base-cmd '("echo" "TEST@"))))
+  (let ((wrp (iruby:proto-impl :name "TEST"
+                               :base-impl '("echo" "TEST@"))))
     (iruby:initialize-instance-from wrp (iruby:default-interactive-ruby))
     (iruby:parse-cmd wrp))
 
@@ -204,12 +188,12 @@
 
 ;; -- console impl tests
 
-;; (iruby:class-slots (find-class 'iruby-wrapper-binding))
+;; (iruby:class-slots (find-class 'iruby:proto-impl))
 
 (eval-when ()
-  (let ((a (iruby:class-slots (find-class 'iruby-wrapper-binding)))
+  (let ((a (iruby:class-slots (find-class 'iruby:proto-impl)))
         (b (iruby:class-slots (find-class 'iruby:interactive-ruby))))
-    ;; => ... set difference in present implementation: (wrapper-base-cmd)
+    ;; => ... set difference in present implementation: (proto-impl-base-cmd)
     (print (list :intersection (cl-intersection a b :test #'eq)
                  :difference (cl-set-difference a b :test #'eq)
                  :a a :b b)
@@ -241,19 +225,23 @@
 
 
 
-(defun iruby-test ()
+(defun iruby-check-cmd ()
   (interactive)
-  (let ((impl
-         (with-current-buffer (or (cdar iruby-process-buffers)
-                                  (error "Found no Ruby"))
-           iruby-buffer-interactive-impl)))
-
+  (let ((impl (iruby-process-impl)))
     ;; console-prefix-cmd is showing up nil for the impl?
     (message "cmd for %S: %S" (iruby:impl-name impl)
              (iruby:parse-cmd impl))
     ))
 
-;; (iruby-test)
+;; (iruby-check-cmd)
+
+
+(defun iruby-check-dir ()
+  (interactive)
+  (let ((proc (iruby-proc)))
+    (message "initial dir: %S"
+             (with-current-buffer (iruby-process-buffer proc)
+               (iruby:impl-initial-dir (iruby-process-impl proc))))))
 
 (eval-when ()
   (let ((inst (make-instance 'iruby:gemfile-console))
@@ -310,40 +298,92 @@
 ;; exprs, mainly in iruby console process buffers
 ;;
 
-(iruby:impl-p
- (with-current-buffer (iruby-process-buffer (iruby-proc))
-   iruby-buffer-interactive-impl))
-;; ^ shouldf => t [x] (iruby:impl-p reimplemented)
+(iruby:impl-p (iruby-process-impl))
+;; ^ should => t [x] (iruby:impl-p reimplemented)
 
-(iruby:interactive-binding-expr-list
-  (with-current-buffer (iruby-process-buffer (iruby-proc))
-    ;; the corresponding slot is bound, so wh does the top form return nil?
-    iruby-buffer-interactive-impl)
-  )
+(iruby:interactive-binding-expr-list (iruby-process-impl))
 ;; ^ should not => nil [x] (initializing console impl from base impl)
 
-(eieio-oref
-  (with-current-buffer (iruby-process-buffer (iruby-proc))
-    ;; the corresponding slot is bound, so wh does the top form return nil?
-    iruby-buffer-interactive-impl)
-  'binding
-  )
+(eieio-oref (iruby-process-impl) 'binding)
 ;; ^ should not => nil [x] (initializing console impl from base impl)
 
 (iruby:interactive-binding-expr-list
- (iruby:wrapper-base-impl
-  (with-current-buffer (iruby-process-buffer (iruby-proc))
-    ;; the corresponding slot is bound, so wh does the top form return nil?
-    iruby-buffer-interactive-impl))
+ (iruby:proto-impl-base-impl (iruby-process-impl)))
+;; ^ does not => nil [x] for some default console impl
+
+
+
+
+;; testing for the EIEIO subclass method specializer
+
+
+(cl-defmethod frob ((kind (subclass iruby:impl)))
+  (message "Reached Frob with %S" kind))
+
+(frob 'iruby:irb-binding)
+
+(frob (cl-find-class 'iruby:irb-binding))
+;; ^ DNW with the actual class instance. So ... e.g ...
+
+(cl-defmethod frob-init ((kind (subclass iruby:impl)) (the-class eieio--class))
+  (message "Reached frob-init for (%S <<class %S ...>>))"
+           kind
+           (class-name the-class)))
+
+(cl-defmethod frob-init ((kind null) (the-class eieio--class))
+  (frob-init (class-name the-class) the-class))
+
+(cl-defmethod frob-init (kind (the-class symbol))
+  (frob-init kind (find-class the-class t)))
+
+
+(eval-when ()
+
+(frob-init nil (cl-find-class 'iruby:irb-binding))
+;; >> OK
+
+(frob-init nil 'iruby:irb-binding)
+;; >> OK
+
+
+(class-precedence-list (cl-find-class 'iruby:irb-binding))
+;; => ...
+
+(type-of (class-precedence-list (cl-find-class 'iruby:irb-binding)))
+;; => cons
+
+(typep (make-instance iruby:irb-binding) 'eieio-default-superclass)
+;; => t
+
+(type-of (cl-find-class 'iruby:irb-binding))
+;; => eieio--class
+
+ ) ;; eval-when NIL
+
+
+;; (frob-init nil (cl-find-class 'iruby:irb-binding))
+
+(cl-defmethod null-test ((obj null))
+  (message "Reached null-test for nil"))
+
+;; (null-test nil)l
+;; >> OK
+
+
+(cl-defmethod frob-init ((kind null) (the-class eieio--class))
+  (frob-init (class-name the-class) the-class))
+
+
+
+;; testing an initform quirk
+
+(eval-when ()
+  (iruby:interactive-base-ruby (iruby:default-interactive-ruby))
+
+  (mapcar 'iruby:interactive-base-ruby iruby-interactive-impls)
+  ;; ^ check all registered impls
+
+  (iruby:interactive-base-ruby (iruby:irb-binding))
   )
-;; ^ does not => nil [x]
 
 
-;;;
-;;; setting `byte-optimizations' to 'byte' to prevent source
-;;; optimizations that might result in errors on unbound symbols,
-;;; when calling either `cl-call-next-method' or `cl-next-method-p'
-;;;
-;; Local Variables:
-;; TBD.byte-optimize: byte
-;; End:
