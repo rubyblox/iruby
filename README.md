@@ -3,7 +3,7 @@ iRuby
 
 **Introducing iRuby**
 
-iRuby is an independent fork of [`inf-ruby`][inf-ruby]
+[iRuby][iruby] is an independent fork of [`inf-ruby`][inf-ruby]
 
 **Features**
 
@@ -65,4 +65,7 @@ iRuby can be installed from source.
 
 **Support**
 
-The iRuby source code is available at GitHub
+The iRuby source code is [available at GitHub][iruby]
+
+[inf-ruby]: http://github.com/nonsequitur/inf-ruby/
+[iruby]: https://github.com/rubyblox/iruby
