@@ -3,18 +3,18 @@ iRuby
 
 **Introducing iRuby**
 
-iRuby is an independent fork of [`inf-ruby`][inf-riby]
+iRuby is an independent fork of [`inf-ruby`][inf-ruby]
 
 **Features**
 
-* Inspired by [`inf-ruby`][inf-riby]
+* Inspired by [`inf-ruby`][inf-ruby]
 
 * Provides an API using EIEIO and Emacs CL classes, with integrated
   class models, generic functions, and method definitions
 
     * Ruby implementations (Ruby, jRuby, other)
     * Interactive Ruby frameworks (IRB, Pry, other)
-    * Consoles modeled after [`inf-ruby`][inf-riby] (Bundler, Rails, other)
+    * Consoles modeled after [`inf-ruby`][inf-ruby] (Bundler, Rails, other)
     * Customization support using EIEIO, e.g `iruby-interactive-impls`
 
 * Tested with IRB, Ruby 3.1, and Bundler
