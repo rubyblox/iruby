@@ -1178,25 +1178,22 @@ This function may return nil, if no iruby process is found in any buffer"
                     buffer
                   (when (process-live-p (iruby-buffer-process buffer))
                     buffer)))))
-    (cl-macrolet ((eval-for-buffer (&rest forms)
-                    `(with-current-buffer for-buffer ,@forms)))
-
-      (or (when (eq (eval-for-buffer major-mode)
-                    'iruby-mode)
+    (with-current-buffer for-buffer
+      (or (when (eq major-mode 'iruby-mode)
             (check-buffer for-buffer))
 
-          (check-buffer (eval-for-buffer iruby-buffer))
+          (check-buffer iruby-buffer)
 
           (when console-ok
             (let ((console (iruby-find-console-buffer
                             (eval-for-buffer default-directory))))
               (check-buffer console)))
 
-          (check-buffer (eval-for-buffer iruby-default-ruby-buffer))
+          (check-buffer iruby-default-ruby-buffer)
 
           (catch 'fallback
             ;; return the first live iruby process buffer
-            (dolist (elt (eval-for-buffer iruby-process-buffers))
+            (dolist (elt iruby-process-buffers)
               (let ((b (cdr elt)))
                 (when (check-buffer b)
                   (throw 'fallback b)))))))))
