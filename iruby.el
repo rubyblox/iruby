@@ -1185,8 +1185,7 @@ This function may return nil, if no iruby process is found in any buffer"
           (check-buffer iruby-buffer)
 
           (when console-ok
-            (let ((console (iruby-find-console-buffer
-                            (eval-for-buffer default-directory))))
+            (let ((console (iruby-find-console-buffer default-directory)))
               (check-buffer console)))
 
           (check-buffer iruby-default-ruby-buffer)
